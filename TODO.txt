@@ -1,0 +1,4 @@
+- Implement Watchdog timer on command branch
+- Implement better timout behavior on imu branch
+- More test coverage
+- Clean and Lint and Analyze (cpp check has something to say)
