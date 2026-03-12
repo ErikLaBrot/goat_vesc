@@ -28,6 +28,7 @@ public:
     Payload build_set_duty_command(float duty);           // -1.0 to 1.0
     Payload build_set_current_command(float amps);
     Payload build_set_current_brake_command(float amps);
+    Payload build_set_servo_pos_command(float position);
 
     // ── Response parsers ──────────────────────────────────────────────────────
     // Each takes a raw payload (stripped of framing/CRC by VescPacketParser)

@@ -127,6 +127,14 @@ VescProtocol::Payload VescProtocol::build_set_current_brake_command(float amps) 
     }));
 }
 
+VescProtocol::Payload VescProtocol::build_set_servo_pos_command(float position) {
+    // VESC servo position is typically sent as position * 1000 in a signed 16-bit field.
+    return frame(builder_.build_packet({
+        static_cast<std::uint8_t>(VescPacketCommID::SetServoPos),
+        static_cast<std::int16_t>(position * 1000.0f),
+    }));
+}
+
 // ── Response parsers ──────────────────────────────────────────────────────────
 
 std::optional<FwVersion> VescProtocol::parse_fw_version(const Payload& payload) {

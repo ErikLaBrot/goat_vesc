@@ -282,6 +282,15 @@ bool VescClient::set_current_brake(float amps) {
     return enqueue_command(std::move(packet));
 }
 
+bool VescClient::set_servo_pos(float position) {
+    std::vector<std::uint8_t> packet;
+    {
+        std::lock_guard lock(protocol_mutex_);
+        packet = cmd_protocol_.build_set_servo_pos_command(position);
+    }
+    return enqueue_command(std::move(packet));
+}
+
 std::optional<FwVersion> VescClient::request_fw_version(std::chrono::milliseconds timeout) {
     if (!running_.load() || timeout <= std::chrono::milliseconds::zero()) {
         return std::nullopt;

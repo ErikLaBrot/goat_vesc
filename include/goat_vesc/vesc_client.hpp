@@ -135,6 +135,8 @@ public:
     bool set_current(float amps);
     /** Enqueues a `COMM_SET_CURRENT_BRAKE` command for transmission. */
     bool set_current_brake(float amps);
+    /** Enqueues a `COMM_SET_SERVO_POS` command for transmission. */
+    bool set_servo_pos(float position);
 
     /**
      * Performs a blocking firmware-version query.
