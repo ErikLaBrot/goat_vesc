@@ -192,6 +192,18 @@ cmake --build build/goat_vesc
 ctest --test-dir build/goat_vesc --output-on-failure
 ```
 
+Sanitizer gate:
+
+```bash
+cmake -S . -B build/goat_vesc-sanitized \
+  -DGOAT_VESC_BUILD_TESTS=ON \
+  -DGOAT_VESC_BUILD_TOOLS=ON \
+  -DGOAT_VESC_ENABLE_ASAN=ON \
+  -DGOAT_VESC_ENABLE_UBSAN=ON
+cmake --build build/goat_vesc-sanitized
+ctest --test-dir build/goat_vesc-sanitized --output-on-failure
+```
+
 ## Backlog Workflow
 
 Development work is tracked as short-lived issue branches, with release scope
