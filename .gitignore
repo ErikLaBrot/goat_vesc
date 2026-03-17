@@ -15,3 +15,17 @@
 # Editor and local agent state
 /.claude/
 .DS_Store
+/.vscode/
+
+# Logs and reports
+/.jscpd-report/
+/.audit/
+/scripts/LLM_plagiarism_test.sh
+/.jscpd.json
+
+#misc local docs
+/BACKLOG.md
+/BRIDGE_READINESS_CHECKLIST.md
+/TODO.txt
+
+/AGENTS.md

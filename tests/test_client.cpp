@@ -1,17 +1,15 @@
+#include "test_support.hpp"
+
 #include "goat_vesc/packet_parser.hpp"
 #include "goat_vesc/protocol_ids.hpp"
 #include "goat_vesc/vesc_client.hpp"
-#include "goat_vesc/vesc_protocol.hpp"
 
 #include <atomic>
 #include <cassert>
 #include <cerrno>
 #include <chrono>
-#include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <future>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -25,65 +23,7 @@ namespace {
 
 using namespace goat_vesc;
 using namespace std::chrono_literals;
-
-std::uint16_t crc16ccitt(const std::vector<std::uint8_t>& data) {
-    std::uint16_t crc = 0;
-    for (const auto byte : data) {
-        crc ^= static_cast<std::uint16_t>(byte) << 8;
-        for (int i = 0; i < 8; ++i) {
-            crc = (crc & 0x8000U) != 0U
-                ? static_cast<std::uint16_t>((crc << 1) ^ 0x1021U)
-                : static_cast<std::uint16_t>(crc << 1);
-        }
-    }
-    return crc;
-}
-
-void append_u8(std::vector<std::uint8_t>& payload, std::uint8_t value) {
-    payload.push_back(value);
-}
-
-void append_u16(std::vector<std::uint8_t>& payload, std::uint16_t value) {
-    payload.push_back(static_cast<std::uint8_t>((value >> 8) & 0xFF));
-    payload.push_back(static_cast<std::uint8_t>(value & 0xFF));
-}
-
-void append_i16(std::vector<std::uint8_t>& payload, std::int16_t value) {
-    append_u16(payload, static_cast<std::uint16_t>(value));
-}
-
-void append_i32(std::vector<std::uint8_t>& payload, std::int32_t value) {
-    const auto raw = static_cast<std::uint32_t>(value);
-    payload.push_back(static_cast<std::uint8_t>((raw >> 24) & 0xFF));
-    payload.push_back(static_cast<std::uint8_t>((raw >> 16) & 0xFF));
-    payload.push_back(static_cast<std::uint8_t>((raw >> 8) & 0xFF));
-    payload.push_back(static_cast<std::uint8_t>(raw & 0xFF));
-}
-
-void append_f32(std::vector<std::uint8_t>& payload, float value) {
-    std::uint32_t raw = 0;
-    static_assert(sizeof(raw) == sizeof(value));
-    std::memcpy(&raw, &value, sizeof(raw));
-    append_i32(payload, static_cast<std::int32_t>(raw));
-}
-
-std::vector<std::uint8_t> frame_payload(const std::vector<std::uint8_t>& payload) {
-    std::vector<std::uint8_t> framed;
-    if (payload.size() <= 255) {
-        framed.push_back(0x02);
-        framed.push_back(static_cast<std::uint8_t>(payload.size()));
-    } else {
-        framed.push_back(0x03);
-        framed.push_back(static_cast<std::uint8_t>((payload.size() >> 8) & 0xFF));
-        framed.push_back(static_cast<std::uint8_t>(payload.size() & 0xFF));
-    }
-    framed.insert(framed.end(), payload.begin(), payload.end());
-    const auto crc = crc16ccitt(payload);
-    framed.push_back(static_cast<std::uint8_t>((crc >> 8) & 0xFF));
-    framed.push_back(static_cast<std::uint8_t>(crc & 0xFF));
-    framed.push_back(0x03);
-    return framed;
-}
+using namespace test_support;
 
 std::vector<std::uint8_t> make_fw_response() {
     return frame_payload({
@@ -248,32 +188,6 @@ private:
     std::thread worker;
 };
 
-void test_packet_round_trip() {
-    VescProtocol protocol;
-    VescPacketParser parser;
-
-    const auto packet = protocol.build_get_imu_data_request();
-    auto payloads = parser.feed_bytes(packet);
-    assert(payloads.size() == 1);
-    assert(payloads.front().front() == static_cast<std::uint8_t>(VescPacketCommID::GetImuData));
-}
-
-void test_crc_resync() {
-    VescProtocol protocol;
-    VescPacketParser parser;
-
-    auto invalid = protocol.build_get_values_request();
-    invalid[3] ^= 0x7F;
-    const auto valid = protocol.build_fw_version_request();
-
-    const auto invalid_payloads = parser.feed_bytes(invalid);
-    assert(invalid_payloads.empty());
-
-    auto payloads = parser.feed_bytes(valid);
-    assert(payloads.size() == 1);
-    assert(payloads.front().front() == static_cast<std::uint8_t>(VescPacketCommID::FwVersion));
-}
-
 void test_client_polling_and_subscriptions() {
     FakeVesc fake;
     std::atomic<std::uint64_t> stamp_counter{1000};
@@ -407,8 +321,6 @@ void test_disconnect_unblocks_query() {
 } // namespace
 
 int main() {
-    test_packet_round_trip();
-    test_crc_resync();
     test_client_polling_and_subscriptions();
     test_poll_timeout_recovers();
     test_disconnect_unblocks_query();

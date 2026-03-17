@@ -192,6 +192,26 @@ cmake --build build/goat_vesc
 ctest --test-dir build/goat_vesc --output-on-failure
 ```
 
+## Backlog Workflow
+
+Development work is tracked as short-lived issue branches:
+
+- do not pre-create branches
+- default workflow is `1 issue = 1 branch = 1 PR`
+- derive branch names from the issue using `issue-<number>-<short-slug>`
+- only create a branch when you are ready to start that issue
+- merge and delete the branch before starting the next substantial branch
+
+The current prioritized local backlog and suggested GitHub issue titles live in
+[`TODO.txt`](TODO.txt). Bridge-v1 requirement coverage and related suggested
+GitHub issue titles live in
+[`BRIDGE_READINESS_CHECKLIST.md`](BRIDGE_READINESS_CHECKLIST.md).
+
+## Bridge Readiness
+
+Bridge-v1 release requirements and requirement coverage are tracked in
+[`BRIDGE_READINESS_CHECKLIST.md`](BRIDGE_READINESS_CHECKLIST.md).
+
 ## Example
 
 A minimal example program is provided in [`tools/vesc_example.cpp`](tools/vesc_example.cpp).

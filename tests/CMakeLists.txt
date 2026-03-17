@@ -1,3 +1,7 @@
-add_executable(test_interface test_interface.cpp)
-target_link_libraries(test_interface PRIVATE goat_vesc)
-add_test(NAME test_interface COMMAND test_interface) 
+add_executable(test_protocol test_protocol.cpp)
+target_link_libraries(test_protocol PRIVATE goat_vesc)
+add_test(NAME test_protocol COMMAND test_protocol)
+
+add_executable(test_client test_client.cpp)
+target_link_libraries(test_client PRIVATE goat_vesc)
+add_test(NAME test_client COMMAND test_client)

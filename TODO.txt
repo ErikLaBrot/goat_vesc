@@ -1,4 +1,91 @@
-- Implement Watchdog timer on command branch
-- Implement better timout behavior on imu branch
-- More test coverage
-- Clean and Lint and Analyze (cpp check has something to say)
+# goat_vesc backlog
+
+Do not pre-create branches. Keep this list as the prioritized source backlog.
+
+Bridge-v1 release requirements and requirement coverage live in
+`BRIDGE_READINESS_CHECKLIST.md`.
+
+Working model:
+- 1 active issue = 1 short-lived branch = 1 PR
+- create the GitHub issue when work is ready to start
+- create the branch from that issue using `issue-<number>-<short-slug>`
+- merge and delete the branch before starting the next substantial branch
+- use GitHub labels such as `fix`, `test`, `feature`, `docs`, and `chore`
+  to classify work item type instead of encoding type in the branch name
+
+Priority backlog:
+
+1. Fix disconnect and transport-failure cleanup
+   Suggested GitHub issue title: Ensure disconnect fully cleans up after async transport failure
+   Notes: Prevent joinable-thread termination and leaked transport state after I/O errors.
+
+2. Fix subscription handle lifetime safety
+   Suggested GitHub issue title: Fix `SubscriptionHandle` lifetime and ownership safety
+   Notes: High-risk correctness issue; good first focused fix.
+
+3. Fix shutdown hang while waiting for writable transport
+   Suggested GitHub issue title: Make disconnect unblock writes and avoid shutdown hangs
+   Notes: Prevent indefinite join waits if the I/O thread is blocked in write readiness.
+
+4. Improve poll timeout and recovery behavior
+   Suggested GitHub issue title: Harden IMU/motor poll timeout and recovery semantics
+   Notes: Directly tied to transport reliability.
+
+5. Fix query timeout ordering and late-reply attribution
+   Suggested GitHub issue title: Enforce per-query deadlines and reject stale late replies
+   Notes: Prevent FIFO queueing from violating caller timeouts and stale replies from satisfying new requests.
+
+6. Fix command enqueue disconnect race
+   Suggested GitHub issue title: Prevent commands from reporting success when dropped during disconnect
+   Notes: Align actual behavior with documented command-submission guarantees.
+
+7. Implement command watchdog safety
+   Suggested GitHub issue title: Add stale-command watchdog / safe-stop behavior
+   Notes: Bridge-critical feature; likely larger than the first two.
+
+8. Expand parser edge-case coverage
+   Suggested GitHub issue title: Add parser/framing edge-case test coverage
+   Notes: Coverage-only unless it exposes a real parser defect.
+
+9. Fix parser long-frame handling
+   Suggested GitHub issue title: Correct unsupported 24-bit parser framing path and protocol limits
+   Notes: Remove dead or incorrect framing logic under the current 512-byte payload limit.
+
+10. Expand control-command coverage
+   Suggested GitHub issue title: Add test coverage for duty, brake current, and servo commands
+   Notes: Confirms existing behavior, narrow and reviewable.
+
+11. Expand client lifecycle coverage
+   Suggested GitHub issue title: Add lifecycle/concurrency coverage for connect/disconnect and polling updates
+   Notes: Keep focused on existing behavior.
+
+12. Define bridge-required protocol support
+   Suggested GitHub issue title: Document and implement bridge-required VESC message support
+   Notes: Do after safety/reliability baseline is clearer.
+
+13. Fix sanitizer-enabled builds
+   Suggested GitHub issue title: Make ASan and UBSan builds link and run across library, tools, and tests
+   Notes: Unblocks runtime bug-finding with sanitizers.
+
+14. Run static analysis and duplication cleanup
+   Suggested GitHub issue title: Address static-analysis and duplication findings
+   Notes: Keep behavior-neutral where possible.
+
+15. Sync docs with actual API
+   Suggested GitHub issue title: Update README and API docs to match shipped behavior
+   Notes: Can be done anytime as a short branch.
+
+16. Convert TODOs into tracked backlog
+    Suggested GitHub issue title: Move repo TODOs into GitHub issues/backlog
+    Notes: Administrative cleanup, low risk.
+
+Scope rules:
+- if an issue changes behavior, include tests for that behavior in the same
+  issue branch and PR
+- if a coverage-focused issue uncovers a substantial bug, open a separate bug
+  issue instead of expanding the original issue beyond scope
+- do not bypass issue-driven workflow unless explicitly told otherwise
+
+Next GitHub issue to create:
+- Ensure disconnect fully cleans up after async transport failure
+- Fix `SubscriptionHandle` lifetime and ownership safety
