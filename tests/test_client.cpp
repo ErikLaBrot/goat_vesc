@@ -106,13 +106,14 @@ void wait_until(Predicate predicate, std::chrono::milliseconds timeout, const ch
     }
 }
 
+struct QuiescenceWait {
+    std::chrono::milliseconds timeout;
+    std::chrono::milliseconds stable_for;
+};
+
 template <typename Loader>
-int wait_for_quiescence(
-    Loader load,
-    std::chrono::milliseconds stable_for,
-    std::chrono::milliseconds timeout,
-    const char* message) {
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
+auto waitForQuiescence(Loader load, QuiescenceWait wait, const char* message) -> int {
+    const auto deadline = std::chrono::steady_clock::now() + wait.timeout;
     int last_value = load();
     auto stable_since = std::chrono::steady_clock::now();
 
@@ -121,7 +122,7 @@ int wait_for_quiescence(
         if (current != last_value) {
             last_value = current;
             stable_since = std::chrono::steady_clock::now();
-        } else if (std::chrono::steady_clock::now() - stable_since >= stable_for) {
+        } else if (std::chrono::steady_clock::now() - stable_since >= wait.stable_for) {
             return current;
         }
         std::this_thread::sleep_for(5ms);
@@ -386,13 +387,15 @@ void test_control_command_delivery() {
     client.disconnect();
 }
 
-void test_connect_disconnect_edges() {
+auto testConnectDisconnectEdges() -> void {
+    constexpr auto kNoPolling = 0ms;
+
     FakeVesc fake;
     std::atomic<int> open_calls{0};
 
     VescConfig config;
-    config.imu_poll_interval = 0ms;
-    config.motor_poll_interval = 0ms;
+    config.imu_poll_interval = kNoPolling;
+    config.motor_poll_interval = kNoPolling;
     config.poll_response_timeout = 15ms;
     config.query_guard_window = 5ms;
     config.open_serial_fn = [&fake, &open_calls](const VescConfig&, int& fd_out) {
@@ -405,15 +408,18 @@ void test_connect_disconnect_edges() {
     client.disconnect();
     assert(!client.is_connected());
 
-    assert(client.connect());
+    const bool connected = client.connect();
+    assert(connected);
     assert(client.is_connected());
     assert(open_calls.load() == 1);
 
-    assert(client.connect());
+    const bool reconnect_result = client.connect();
+    assert(reconnect_result);
     assert(client.is_connected());
     assert(open_calls.load() == 1);
 
-    assert(client.set_rpm(1234));
+    const bool rpm_sent = client.set_rpm(1234);
+    assert(rpm_sent);
     wait_until([&] { return fake.rpm_commands.load() == 1; }, 500ms, "rpm command was not delivered");
 
     client.disconnect();
@@ -421,26 +427,33 @@ void test_connect_disconnect_edges() {
 
     client.disconnect();
     assert(!client.is_connected());
-    assert(!client.set_rpm(2345));
-    assert(!client.request_fw_version(20ms).has_value());
+    const bool rpm_after_disconnect = client.set_rpm(2345);
+    assert(!rpm_after_disconnect);
+    const auto version_after_disconnect = client.request_fw_version(20ms);
+    assert(!version_after_disconnect.has_value());
 }
 
-void test_runtime_poll_interval_updates() {
+auto testRuntimePollIntervalUpdates() -> void {
+    constexpr auto kInitialStampNs = 1000ULL;
+    constexpr auto kStampStepNs = 1000ULL;
+    constexpr auto kNoPolling = 0ms;
+
     FakeVesc fake;
-    std::atomic<std::uint64_t> stamp_counter{1000};
+    std::atomic<std::uint64_t> stamp_counter{kInitialStampNs};
 
     VescConfig config;
-    config.imu_poll_interval = 0ms;
-    config.motor_poll_interval = 0ms;
+    config.imu_poll_interval = kNoPolling;
+    config.motor_poll_interval = kNoPolling;
     config.poll_response_timeout = 15ms;
     config.query_guard_window = 5ms;
-    config.wall_time_ns = [&stamp_counter] { return stamp_counter.fetch_add(1000); };
+    config.wall_time_ns = [&stamp_counter] { return stamp_counter.fetch_add(kStampStepNs); };
     config.open_serial_fn = [&fake](const VescConfig&, int& fd_out) {
         return fake.open_client_fd(fd_out);
     };
 
     VescClient client(config);
-    assert(client.connect());
+    const bool connected = client.connect();
+    assert(connected);
 
     std::this_thread::sleep_for(60ms);
     assert(fake.imu_requests.load() == 0);
@@ -464,10 +477,11 @@ void test_runtime_poll_interval_updates() {
     client.set_imu_poll_interval(0ms);
     client.set_motor_poll_interval(0ms);
 
-    const int quiet_imu_requests = wait_for_quiescence(
-        [&] { return fake.imu_requests.load(); }, 50ms, 300ms, "imu polling never quiesced");
-    const int quiet_motor_requests = wait_for_quiescence(
-        [&] { return fake.value_requests.load(); }, 50ms, 300ms, "motor polling never quiesced");
+    const QuiescenceWait wait{300ms, 50ms};
+    const int quiet_imu_requests =
+        waitForQuiescence([&] { return fake.imu_requests.load(); }, wait, "imu polling never quiesced");
+    const int quiet_motor_requests =
+        waitForQuiescence([&] { return fake.value_requests.load(); }, wait, "motor polling never quiesced");
 
     client.set_imu_poll_interval(15ms);
     client.set_motor_poll_interval(15ms);
@@ -487,22 +501,28 @@ void test_runtime_poll_interval_updates() {
     client.disconnect();
 }
 
-void test_concurrent_poll_updates_keep_client_responsive() {
+auto testConcurrentPollUpdatesKeepClientResponsive() -> void {
+    constexpr auto kInitialStampNs = 5000ULL;
+    constexpr auto kStampStepNs = 1000ULL;
+    constexpr int kPollUpdateIterations = 24;
+    constexpr int kReadIterations = 200;
+
     FakeVesc fake;
-    std::atomic<std::uint64_t> stamp_counter{5000};
+    std::atomic<std::uint64_t> stamp_counter{kInitialStampNs};
 
     VescConfig config;
     config.imu_poll_interval = 25ms;
     config.motor_poll_interval = 35ms;
     config.poll_response_timeout = 15ms;
     config.query_guard_window = 2ms;
-    config.wall_time_ns = [&stamp_counter] { return stamp_counter.fetch_add(1000); };
+    config.wall_time_ns = [&stamp_counter] { return stamp_counter.fetch_add(kStampStepNs); };
     config.open_serial_fn = [&fake](const VescConfig&, int& fd_out) {
         return fake.open_client_fd(fd_out);
     };
 
     VescClient client(config);
-    assert(client.connect());
+    const bool connected = client.connect();
+    assert(connected);
 
     wait_until([&] { return client.latest_imu().has_value(); }, 500ms, "imu cache never populated");
     wait_until([&] { return client.latest_motor_state().has_value(); }, 500ms, "motor cache never populated");
@@ -510,7 +530,7 @@ void test_concurrent_poll_updates_keep_client_responsive() {
     std::thread updater([&client] {
         const std::array imu_intervals{0ms, 20ms, 45ms, 15ms};
         const std::array motor_intervals{0ms, 30ms, 50ms, 20ms};
-        for (int i = 0; i < 24; ++i) {
+        for (int i = 0; i < kPollUpdateIterations; ++i) {
             client.set_imu_poll_interval(imu_intervals[static_cast<std::size_t>(i) % imu_intervals.size()]);
             client.set_motor_poll_interval(motor_intervals[static_cast<std::size_t>(i) % motor_intervals.size()]);
             std::this_thread::sleep_for(4ms);
@@ -520,7 +540,7 @@ void test_concurrent_poll_updates_keep_client_responsive() {
     });
 
     std::thread reader([&client] {
-        for (int i = 0; i < 200; ++i) {
+        for (int i = 0; i < kReadIterations; ++i) {
             (void)client.latest_imu();
             (void)client.latest_motor_state();
             std::this_thread::sleep_for(1ms);
@@ -584,9 +604,9 @@ int main() {
     test_client_polling_and_subscriptions();
     test_poll_timeout_recovers();
     test_control_command_delivery();
-    test_connect_disconnect_edges();
-    test_runtime_poll_interval_updates();
-    test_concurrent_poll_updates_keep_client_responsive();
+    testConnectDisconnectEdges();
+    testRuntimePollIntervalUpdates();
+    testConcurrentPollUpdatesKeepClientResponsive();
     test_disconnect_unblocks_query();
     return 0;
 }
