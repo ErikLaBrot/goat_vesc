@@ -97,7 +97,7 @@ related blocking bug is closed or explicitly accepted.
 | BRIDGE-REL-004 | Poll timeouts shall recover without permanently stalling IMU or motor telemetry. | Temporary missed replies should not kill telemetry flow. | must have | partial | test | Harden IMU/motor poll timeout and recovery semantics |
 | BRIDGE-REL-005 | Blocking query deadlines shall be honored, and stale late replies shall not satisfy a newer request. | Bridge diagnostics must not return misleading results after timing faults. | must have | missing | not yet covered | Enforce per-query deadlines and reject stale late replies |
 | BRIDGE-REL-006 | Command submission results shall truthfully reflect whether a command can still be delivered during disconnect races. | Bridge control logic needs accurate command-send outcomes. | must have | missing | not yet covered | Prevent commands from reporting success when dropped during disconnect |
-| BRIDGE-REL-007 | Sanitizer-enabled builds should run across the library, tools, and tests. | Sanitizers are a practical reliability gate for transport and lifetime bugs. | should have later | missing | not yet covered | Make ASan and UBSan builds link and run across library, tools, and tests |
+| BRIDGE-REL-007 | Sanitizer-enabled builds should run across the library, tools, and tests. | Sanitizers are a practical reliability gate for transport and lifetime bugs. | should have later | covered | build + test | none |
 
 ## Coverage Policy
 
