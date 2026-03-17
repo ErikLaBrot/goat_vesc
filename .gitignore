@@ -14,8 +14,9 @@
 
 # Editor and local agent state
 /.claude/
-.DS_Store
+/.codex
 /.vscode/
+.DS_Store
 
 # Logs and reports
 /.jscpd-report/
