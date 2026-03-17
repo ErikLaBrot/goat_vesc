@@ -112,7 +112,7 @@ struct QuiescenceWait {
 };
 
 template <typename Loader>
-auto waitForQuiescence(Loader load, QuiescenceWait wait, const char* message) -> int {
+auto wait_for_quiescence(Loader load, QuiescenceWait wait, const char* message) -> int {
     const auto deadline = std::chrono::steady_clock::now() + wait.timeout;
     int last_value = load();
     auto stable_since = std::chrono::steady_clock::now();
@@ -387,7 +387,7 @@ void test_control_command_delivery() {
     client.disconnect();
 }
 
-auto testConnectDisconnectEdges() -> void {
+auto test_connect_disconnect_edges() -> void {
     constexpr auto kNoPolling = 0ms;
 
     FakeVesc fake;
@@ -433,7 +433,7 @@ auto testConnectDisconnectEdges() -> void {
     assert(!version_after_disconnect.has_value());
 }
 
-auto testRuntimePollIntervalUpdates() -> void {
+auto test_runtime_poll_interval_updates() -> void {
     constexpr auto kInitialStampNs = 1000ULL;
     constexpr auto kStampStepNs = 1000ULL;
     constexpr auto kNoPolling = 0ms;
@@ -479,9 +479,9 @@ auto testRuntimePollIntervalUpdates() -> void {
 
     const QuiescenceWait wait{300ms, 50ms};
     const int quiet_imu_requests =
-        waitForQuiescence([&] { return fake.imu_requests.load(); }, wait, "imu polling never quiesced");
+        wait_for_quiescence([&] { return fake.imu_requests.load(); }, wait, "imu polling never quiesced");
     const int quiet_motor_requests =
-        waitForQuiescence([&] { return fake.value_requests.load(); }, wait, "motor polling never quiesced");
+        wait_for_quiescence([&] { return fake.value_requests.load(); }, wait, "motor polling never quiesced");
 
     client.set_imu_poll_interval(15ms);
     client.set_motor_poll_interval(15ms);
@@ -501,7 +501,7 @@ auto testRuntimePollIntervalUpdates() -> void {
     client.disconnect();
 }
 
-auto testConcurrentPollUpdatesKeepClientResponsive() -> void {
+auto test_concurrent_poll_updates_keep_client_responsive() -> void {
     constexpr auto kInitialStampNs = 5000ULL;
     constexpr auto kStampStepNs = 1000ULL;
     constexpr int kPollUpdateIterations = 24;
@@ -604,9 +604,9 @@ int main() {
     test_client_polling_and_subscriptions();
     test_poll_timeout_recovers();
     test_control_command_delivery();
-    testConnectDisconnectEdges();
-    testRuntimePollIntervalUpdates();
-    testConcurrentPollUpdatesKeepClientResponsive();
+    test_connect_disconnect_edges();
+    test_runtime_poll_interval_updates();
+    test_concurrent_poll_updates_keep_client_responsive();
     test_disconnect_unblocks_query();
     return 0;
 }
