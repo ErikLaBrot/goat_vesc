@@ -33,8 +33,8 @@ behavior.
 | Bucket | Count |
 |---|---:|
 | Must-have requirements | 16 |
-| Must-have requirements fully covered | 8 |
-| Must-have requirements partially covered | 2 |
+| Must-have requirements fully covered | 9 |
+| Must-have requirements partially covered | 1 |
 | Must-have requirements missing | 6 |
 | Open product decisions | 1 |
 
@@ -83,7 +83,7 @@ related blocking bug is closed or explicitly accepted.
 
 | ID | Requirement | Rationale | Priority | Status | Evidence | Suggested GitHub issue title |
 |---|---|---|---|---|---|---|
-| BRIDGE-CFG-001 | The library shall allow the bridge to configure IMU and motor polling rates. | Polling cadence is controlled on the host side, not by the VESC. | must have | partial | code review | Add lifecycle/concurrency coverage for connect/disconnect and polling updates |
+| BRIDGE-CFG-001 | The library shall allow the bridge to configure IMU and motor polling rates. | Polling cadence is controlled on the host side, not by the VESC. | must have | covered | test | Add lifecycle/concurrency coverage for connect/disconnect and polling updates |
 | BRIDGE-CFG-002 | The bridge-facing stack shall expose current polling/config behavior for introspection. | Operators should be able to tell what cadence/config the bridge is using. | must have | missing | not yet covered | Expose current polling/config behavior for bridge introspection |
 | BRIDGE-CFG-003 | The library shall keep firmware-version query support available for bridge diagnostics. | Firmware identification is useful for compatibility and field debugging. | should have later | covered | test | Add parser/framing edge-case test coverage; Add lifecycle/concurrency coverage for connect/disconnect and polling updates |
 
