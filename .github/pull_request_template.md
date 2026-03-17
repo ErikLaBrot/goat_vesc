@@ -1,7 +1,7 @@
 ## Authoritative Issue
 
 - Issue: #
-- Parent issue: #
+- Milestone: `goat_vesc_driver v1.0`
 
 ## Labels
 

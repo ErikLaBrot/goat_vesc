@@ -1,31 +1,47 @@
 ---
-name: Bridge umbrella
-about: Track a bridge-v1 effort that spans multiple PR-sized child issues.
+name: Release meta
+about: Define a release outcome while the milestone tracks the work items.
 title: ""
-labels: ["priority/bridge-v1"]
+labels: []
 assignees: []
 ---
 
 ## Goal
 
-Describe the bridge-v1 outcome this umbrella issue is tracking.
+Describe the release outcome this meta issue is defining.
 
-## Authoritative Scope
+For release meta issues, the title may be the release qualifier itself, for
+example `goat_vesc_driver v1.0`.
 
-- This GitHub issue is the source of truth for scope and acceptance.
-- Local planning or backlog docs may mirror it, but GitHub wins if they differ.
+## Release Definition
+
+- This issue is a lightweight release brief, not the authoritative work tracker.
+- The milestone is the authoritative release bucket for included work items.
+- Local planning or backlog docs may mirror this release definition, but GitHub
+  remains authoritative if they differ.
+- Resolving this issue means the release definition, requirement references, and
+  accepted exceptions are current for the milestone.
+
+## Milestone
+
+- Milestone: `goat_vesc_driver v1.0`
 
 ## Acceptance Criteria
 
 - [ ] List the release-meaningful outcome.
 - [ ] List the evidence needed for approval.
-- [ ] List any required doc or checklist updates.
+- [ ] List the required doc or checklist updates.
+- [ ] Confirm the linked milestone contains the actual release work items.
 
-## Child Issues
+## Checklist And Docs
 
-- [ ] #0000
-- [ ] #0000
-- [ ] #0000
+- [ ] Link the milestone.
+- [ ] Link `BRIDGE_READINESS_CHECKLIST.md`.
+- [ ] Link any release summary docs if needed.
+
+## Known Accepted Exceptions
+
+- None currently.
 
 ## Requirement IDs
 
@@ -34,4 +50,4 @@ Describe the bridge-v1 outcome this umbrella issue is tracking.
 ## Notes For Local Execution
 
 - Plan locally against this issue before implementation.
-- Keep each child issue to one focused branch and one PR.
+- Keep each release work item to one focused branch and one PR.

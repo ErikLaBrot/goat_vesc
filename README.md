@@ -194,23 +194,27 @@ ctest --test-dir build/goat_vesc --output-on-failure
 
 ## Backlog Workflow
 
-Development work is tracked as short-lived issue branches:
+Development work is tracked as short-lived issue branches, with release scope
+tracked by the GitHub milestone:
 
 - do not pre-create branches
 - default workflow is `1 issue = 1 branch = 1 PR`
 - derive branch names from the issue using `issue-<number>-<short-slug>`
 - only create a branch when you are ready to start that issue
 - merge and delete the branch before starting the next substantial branch
+- use the current v1.0 milestone to indicate release membership
+- use labels such as `bug`, `feature`, `test`, `docs`, and `chore` to classify
+  work item type instead of encoding type in the branch name
 
-The current prioritized local backlog and suggested GitHub issue titles live in
-[`TODO.txt`](TODO.txt). Bridge-v1 requirement coverage and related suggested
-GitHub issue titles live in
-[`BRIDGE_READINESS_CHECKLIST.md`](BRIDGE_READINESS_CHECKLIST.md).
+The current release-definition and requirement coverage reference lives in
+[`BRIDGE_READINESS_CHECKLIST.md`](BRIDGE_READINESS_CHECKLIST.md). Once work
+items are opened on GitHub, milestone-assigned issues are the active backlog.
 
 ## Bridge Readiness
 
-Bridge-v1 release requirements and requirement coverage are tracked in
-[`BRIDGE_READINESS_CHECKLIST.md`](BRIDGE_READINESS_CHECKLIST.md).
+Bridge-v1 release requirements and requirement coverage are tracked locally in
+[`BRIDGE_READINESS_CHECKLIST.md`](BRIDGE_READINESS_CHECKLIST.md), while the
+GitHub milestone remains authoritative for active release tracking.
 
 ## Example
 

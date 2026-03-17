@@ -2,7 +2,7 @@
 name: Bridge work item
 about: Track one PR-sized bridge-v1 task.
 title: ""
-labels: ["priority/bridge-v1"]
+labels: []
 assignees: []
 ---
 
@@ -10,9 +10,10 @@ assignees: []
 
 Describe the exact change this issue authorizes.
 
-## Parent / Related Issues
+## Release Context
 
-- Parent: #
+- Milestone: `goat_vesc_driver v1.0`
+- Meta issue: #
 - Related: #
 
 ## Acceptance Criteria
@@ -33,4 +34,5 @@ Describe the exact change this issue authorizes.
 ## Reviewer Notes
 
 - Use this issue as the authoritative scope for the PR.
+- Use the milestone to determine release membership.
 - Do not close from the PR unless the reviewer wants auto-close on merge.
