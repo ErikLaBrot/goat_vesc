@@ -65,6 +65,22 @@ std::vector<std::uint8_t> make_values_response(std::int32_t rpm) {
     return frame_payload(payload);
 }
 
+std::int16_t read_i16(const std::vector<std::uint8_t>& payload, std::size_t offset) {
+    assert(offset + 1 < payload.size());
+    const auto hi = static_cast<std::uint16_t>(payload[offset]);
+    const auto lo = static_cast<std::uint16_t>(payload[offset + 1]);
+    return static_cast<std::int16_t>((hi << 8) | lo);
+}
+
+std::int32_t read_i32(const std::vector<std::uint8_t>& payload, std::size_t offset) {
+    assert(offset + 3 < payload.size());
+    const auto b0 = static_cast<std::uint32_t>(payload[offset]);
+    const auto b1 = static_cast<std::uint32_t>(payload[offset + 1]);
+    const auto b2 = static_cast<std::uint32_t>(payload[offset + 2]);
+    const auto b3 = static_cast<std::uint32_t>(payload[offset + 3]);
+    return static_cast<std::int32_t>((b0 << 24) | (b1 << 16) | (b2 << 8) | b3);
+}
+
 void write_all(int fd, const std::vector<std::uint8_t>& bytes) {
     const std::uint8_t* cursor = bytes.data();
     std::size_t remaining = bytes.size();
@@ -129,6 +145,12 @@ struct FakeVesc {
     std::atomic<int> value_requests{0};
     std::atomic<int> rpm_commands{0};
     std::atomic<int> current_commands{0};
+    std::atomic<int> duty_commands{0};
+    std::atomic<int> brake_current_commands{0};
+    std::atomic<int> servo_commands{0};
+    std::atomic<std::int32_t> last_duty_raw{0};
+    std::atomic<std::int32_t> last_brake_current_raw{0};
+    std::atomic<std::int16_t> last_servo_raw{0};
 
 private:
     void run() {
@@ -163,6 +185,21 @@ private:
                             ++rpm_commands;
                         } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetCurrent)) {
                             ++current_commands;
+                        } else if (
+                            id == static_cast<std::uint8_t>(VescPacketCommID::SetDuty) &&
+                            payload->size() == 5) {
+                            last_duty_raw.store(read_i32(*payload, 1));
+                            ++duty_commands;
+                        } else if (
+                            id == static_cast<std::uint8_t>(VescPacketCommID::SetCurrentBrake) &&
+                            payload->size() == 5) {
+                            last_brake_current_raw.store(read_i32(*payload, 1));
+                            ++brake_current_commands;
+                        } else if (
+                            id == static_cast<std::uint8_t>(VescPacketCommID::SetServoPos) &&
+                            payload->size() == 3) {
+                            last_servo_raw.store(read_i16(*payload, 1));
+                            ++servo_commands;
                         }
                     }
                 }
@@ -294,6 +331,36 @@ void test_poll_timeout_recovers() {
     client.disconnect();
 }
 
+void test_control_command_delivery() {
+    FakeVesc fake;
+    VescConfig config;
+    config.imu_poll_interval = 0ms;
+    config.motor_poll_interval = 0ms;
+    config.poll_response_timeout = 15ms;
+    config.query_guard_window = 5ms;
+    config.open_serial_fn = [&fake](const VescConfig&, int& fd_out) {
+        return fake.open_client_fd(fd_out);
+    };
+
+    VescClient client(config);
+    assert(client.connect());
+
+    assert(client.set_duty(0.2f));
+    assert(client.set_current_brake(-1.5f));
+    assert(client.set_servo_pos(0.5f));
+
+    wait_until([&] { return fake.duty_commands.load() == 1; }, 500ms, "duty command was not delivered");
+    wait_until([&] { return fake.brake_current_commands.load() == 1; }, 500ms,
+        "brake current command was not delivered");
+    wait_until([&] { return fake.servo_commands.load() == 1; }, 500ms, "servo command was not delivered");
+
+    assert(fake.last_duty_raw.load() == 20000);
+    assert(fake.last_brake_current_raw.load() == -1500);
+    assert(fake.last_servo_raw.load() == 500);
+
+    client.disconnect();
+}
+
 void test_disconnect_unblocks_query() {
     FakeVesc fake(false, false);
     VescConfig config;
@@ -323,6 +390,7 @@ void test_disconnect_unblocks_query() {
 int main() {
     test_client_polling_and_subscriptions();
     test_poll_timeout_recovers();
+    test_control_command_delivery();
     test_disconnect_unblocks_query();
     return 0;
 }
