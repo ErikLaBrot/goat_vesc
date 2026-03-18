@@ -114,6 +114,16 @@ void write_all(int fd, const std::vector<std::uint8_t>& bytes) {
   }
 }
 
+bool is_writable(int fd) {
+  fd_set wfds;
+  FD_ZERO(&wfds);
+  FD_SET(fd, &wfds);
+
+  struct timeval timeout {};
+  const int rc = ::select(fd + 1, nullptr, &wfds, nullptr, &timeout);
+  return rc > 0 && FD_ISSET(fd, &wfds);
+}
+
 template <typename Predicate>
 void wait_until(Predicate predicate, std::chrono::milliseconds timeout, const char* message) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -149,6 +159,59 @@ auto wait_for_quiescence(Loader load, QuiescenceWait wait, const char* message) 
 
   throw std::runtime_error(message);
 }
+
+struct BlockedWriteFakeVesc {
+  BlockedWriteFakeVesc() {
+    int fds[2]{-1, -1};
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
+      throw std::runtime_error("socketpair failed");
+    }
+
+    server_fd_ = fds[0];
+    client_fd_ = fds[1];
+
+    const int send_buffer_bytes = 1024;
+    (void)::setsockopt(client_fd_, SOL_SOCKET, SO_SNDBUF, &send_buffer_bytes,
+                       sizeof(send_buffer_bytes));
+
+    observer_fd_ = ::dup(client_fd_);
+    if (observer_fd_ < 0) {
+      throw std::runtime_error("dup failed");
+    }
+  }
+
+  ~BlockedWriteFakeVesc() {
+    if (observer_fd_ >= 0) {
+      ::close(observer_fd_);
+    }
+    if (server_fd_ >= 0) {
+      ::close(server_fd_);
+    }
+    if (client_fd_ >= 0) {
+      ::close(client_fd_);
+    }
+  }
+
+  bool open_client_fd(int& fd_out) {
+    if (client_fd_ < 0) {
+      return false;
+    }
+
+    fd_out = client_fd_;
+    client_fd_ = -1;
+    return true;
+  }
+
+  void wait_until_blocked(std::chrono::milliseconds timeout) const {
+    wait_until([this] { return !is_writable(observer_fd_); }, timeout,
+               "client transport never reached blocked-write state");
+  }
+
+private:
+  int server_fd_{-1};
+  int client_fd_{-1};
+  int observer_fd_{-1};
+};
 
 struct FakeVesc {
   struct Behavior {
@@ -678,6 +741,43 @@ void test_disconnect_unblocks_query() {
   assert(!result.has_value());
 }
 
+void test_disconnect_unblocks_blocked_write_wait() {
+  BlockedWriteFakeVesc fake;
+  VescConfig config;
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+  config.poll_response_timeout = 20ms;
+  config.query_guard_window = 5ms;
+  config.open_serial_fn = [&fake](const VescConfig&, int& fd_out) {
+    return fake.open_client_fd(fd_out);
+  };
+
+  VescClient client(config);
+  assert(client.connect());
+
+  auto query_future =
+      std::async(std::launch::async, [&client] { return client.request_fw_version(500ms); });
+
+  for (int i = 0; i < 20000; ++i) {
+    assert(client.set_rpm(1000 + i));
+  }
+
+  fake.wait_until_blocked(500ms);
+
+  auto disconnect_future = std::async(std::launch::async, [&client] {
+    client.disconnect();
+    return true;
+  });
+
+  const auto disconnect_status = disconnect_future.wait_for(250ms);
+  assert(disconnect_status == std::future_status::ready);
+  assert(disconnect_future.get());
+  assert(!client.is_connected());
+
+  const auto query_result = query_future.get();
+  assert(!query_result.has_value());
+}
+
 void test_command_rejected_after_disconnect_state_wins_queue_race() {
   VescClient client(VescConfig{});
   auto& scheduler_mutex = VescClientTestAccess::scheduler_mutex(client);
@@ -709,6 +809,7 @@ int main() {
   test_runtime_poll_interval_updates();
   test_concurrent_poll_updates_keep_client_responsive();
   test_disconnect_unblocks_query();
+  test_disconnect_unblocks_blocked_write_wait();
   test_command_rejected_after_disconnect_state_wins_queue_race();
   return 0;
 }

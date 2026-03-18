@@ -74,6 +74,16 @@ std::optional<std::chrono::microseconds> micros_until(const SteadyClock::time_po
   return std::chrono::duration_cast<std::chrono::microseconds>(deadline - now);
 }
 
+void drain_fd(int fd) {
+  if (fd < 0) {
+    return;
+  }
+
+  std::uint8_t buffer[64];
+  while (::read(fd, buffer, sizeof(buffer)) > 0) {
+  }
+}
+
 template <typename CallbackMap, typename Sample>
 void invoke_callbacks(const CallbackMap& callbacks, const Sample& sample) {
   for (const auto& [id, cb] : callbacks) {
@@ -413,9 +423,7 @@ void VescClient::io_loop() {
     }
 
     if (FD_ISSET(wake_pipe_[0], &rfds)) {
-      std::uint8_t buffer[64];
-      while (::read(wake_pipe_[0], buffer, sizeof(buffer)) > 0) {
-      }
+      drain_fd(wake_pipe_[0]);
     }
 
     if (FD_ISSET(fd_, &rfds)) {
@@ -622,13 +630,26 @@ bool VescClient::write_packet(const std::vector<std::uint8_t>& pkt) {
 
 bool VescClient::wait_until_writable() {
   while (running_.load()) {
+    fd_set rfds;
     fd_set wfds;
+    FD_ZERO(&rfds);
     FD_ZERO(&wfds);
     FD_SET(fd_, &wfds);
+    FD_SET(wake_pipe_[0], &rfds);
 
-    const int rc = ::select(fd_ + 1, nullptr, &wfds, nullptr, nullptr);
+    const int nfds = std::max(fd_, wake_pipe_[0]) + 1;
+    const int rc = ::select(nfds, &rfds, &wfds, nullptr, nullptr);
     if (rc > 0) {
-      return true;
+      if (FD_ISSET(wake_pipe_[0], &rfds)) {
+        drain_fd(wake_pipe_[0]);
+        if (!running_.load()) {
+          return false;
+        }
+      }
+      if (FD_ISSET(fd_, &wfds)) {
+        return true;
+      }
+      continue;
     }
     if (rc < 0 && errno == EINTR) {
       continue;
