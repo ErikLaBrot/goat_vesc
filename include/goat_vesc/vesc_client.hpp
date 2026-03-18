@@ -225,6 +225,7 @@ private:
   void unsubscribe_imu(std::size_t id);
   void unsubscribe_motor_state(std::size_t id);
 
+  PollChannel* select_due_poll_channel(const SteadyClock::time_point& now);
   std::optional<ScheduledRequest> make_due_poll_request(PollChannel& channel,
                                                         const SteadyClock::time_point& now);
   std::optional<ScheduledRequest> dequeue_ready_query(const SteadyClock::time_point& now);
