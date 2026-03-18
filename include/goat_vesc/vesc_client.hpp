@@ -232,6 +232,7 @@ private:
   void publish_imu(const VescIMUData& data);
   void publish_motor_state(const VescMotorState& state);
   void clear_pending_work();
+  void cleanup_transport_state();
 
   PollChannel* select_due_poll_channel(const SteadyClock::time_point& now);
   std::optional<ScheduledRequest> make_due_poll_request(PollChannel& channel,

@@ -55,6 +55,22 @@ struct VescClientTestAccess {
     std::lock_guard lock(callbacks->mutex);
     return callbacks->motor_callbacks.size();
   }
+
+  static auto io_thread_joinable(VescClient& client) -> bool {
+    return client.io_thread_.joinable();
+  }
+
+  static auto fd(const VescClient& client) -> int {
+    return client.fd_;
+  }
+
+  static auto wake_read_fd(const VescClient& client) -> int {
+    return client.wake_pipe_[0];
+  }
+
+  static auto wake_write_fd(const VescClient& client) -> int {
+    return client.wake_pipe_[1];
+  }
 };
 
 } // namespace goat_vesc
@@ -232,6 +248,31 @@ struct ScopedFd {
 
 private:
   int fd_;
+};
+
+struct WriteFailingFakeTransport {
+  WriteFailingFakeTransport() {
+    int pipe_fds[2]{-1, -1};
+    if (::pipe(pipe_fds) != 0) {
+      throw std::runtime_error("pipe failed");
+    }
+
+    client_read_fd_.reset(pipe_fds[0]);
+    write_fd_.reset(pipe_fds[1]);
+  }
+
+  bool open_client_fd(int& fd_out) {
+    if (client_read_fd_.get() < 0) {
+      return false;
+    }
+
+    fd_out = client_read_fd_.release();
+    return true;
+  }
+
+private:
+  ScopedFd client_read_fd_;
+  ScopedFd write_fd_;
 };
 
 struct BlockedWriteFakeVesc {
@@ -1086,6 +1127,57 @@ void test_command_rejected_after_disconnect_state_wins_queue_race() {
   assert(VescClientTestAccess::command_queue(client).empty());
 }
 
+void test_disconnect_cleans_up_after_async_transport_failure() {
+  WriteFailingFakeTransport fake;
+
+  VescConfig config;
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+  config.poll_response_timeout = 20ms;
+  config.query_guard_window = 5ms;
+  config.open_serial_fn = [&fake](const VescConfig&, int& fd_out) {
+    return fake.open_client_fd(fd_out);
+  };
+
+  VescClient client(config);
+  assert(client.connect());
+  assert(VescClientTestAccess::io_thread_joinable(client));
+
+  assert(client.set_rpm(1234));
+  wait_until([&] { return !client.is_connected(); }, 500ms,
+             "async transport failure did not stop the client");
+
+  client.disconnect();
+  client.disconnect();
+
+  assert(!client.is_connected());
+  assert(!VescClientTestAccess::io_thread_joinable(client));
+  assert(VescClientTestAccess::fd(client) == -1);
+  assert(VescClientTestAccess::wake_read_fd(client) == -1);
+  assert(VescClientTestAccess::wake_write_fd(client) == -1);
+}
+
+void test_destruction_after_async_transport_failure_is_safe() {
+  WriteFailingFakeTransport fake;
+
+  VescConfig config;
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+  config.poll_response_timeout = 20ms;
+  config.query_guard_window = 5ms;
+  config.open_serial_fn = [&fake](const VescConfig&, int& fd_out) {
+    return fake.open_client_fd(fd_out);
+  };
+
+  {
+    VescClient client(config);
+    assert(client.connect());
+    assert(client.set_rpm(1234));
+    wait_until([&] { return !client.is_connected(); }, 500ms,
+               "async transport failure did not stop the client before destruction");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -1103,5 +1195,7 @@ int main() {
   test_disconnect_unblocks_query();
   test_disconnect_unblocks_blocked_write_wait();
   test_command_rejected_after_disconnect_state_wins_queue_race();
+  test_disconnect_cleans_up_after_async_transport_failure();
+  test_destruction_after_async_transport_failure_is_safe();
   return 0;
 }
