@@ -133,11 +133,26 @@ auto wait_for_quiescence(Loader load, QuiescenceWait wait, const char* message) 
 }
 
 struct FakeVesc {
-  explicit FakeVesc(int dropped_imu_replies = 0, int dropped_value_replies = 0,
-                    bool respond_to_fw = true)
-      : dropped_imu_replies_(std::max(dropped_imu_replies, 0)),
-        dropped_value_replies_(std::max(dropped_value_replies, 0)),
-        respond_fw_(respond_to_fw) {
+  struct Behavior {
+    int dropped_imu_replies{0};
+    int dropped_value_replies{0};
+    bool respond_to_fw{true};
+
+    static auto drop_imu_replies(int count) -> Behavior {
+      return Behavior{count, 0, true};
+    }
+
+    static auto without_fw_response() -> Behavior {
+      return Behavior{0, 0, false};
+    }
+  };
+
+  FakeVesc() : FakeVesc(Behavior{}) {}
+
+  explicit FakeVesc(Behavior behavior)
+      : dropped_imu_replies_(std::max(behavior.dropped_imu_replies, 0)),
+        dropped_value_replies_(std::max(behavior.dropped_value_replies, 0)),
+        respond_fw_(behavior.respond_to_fw) {
     int fds[2]{-1, -1};
     if (::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
       throw std::runtime_error("socketpair failed");
@@ -148,9 +163,6 @@ struct FakeVesc {
     (void)::fcntl(server_fd_, F_SETFL, flags | O_NONBLOCK);
     worker_ = std::thread([this] { run(); });
   }
-
-  FakeVesc(bool drop_first_imu_reply, bool respond_to_fw)
-      : FakeVesc(drop_first_imu_reply ? 1 : 0, 0, respond_to_fw) {}
 
   ~FakeVesc() {
     running_.store(false);
@@ -348,7 +360,7 @@ void test_client_polling_and_subscriptions() {
 }
 
 void test_poll_timeout_recovers() {
-  FakeVesc fake(1);
+  FakeVesc fake(FakeVesc::Behavior::drop_imu_replies(1));
   VescConfig config;
   config.imu_poll_interval = 20ms;
   config.motor_poll_interval = 30ms;
@@ -370,7 +382,8 @@ void test_poll_timeout_recovers() {
 }
 
 void test_imu_timeout_does_not_starve_motor_polling() {
-  FakeVesc fake(2);
+  auto behavior = FakeVesc::Behavior::drop_imu_replies(2);
+  FakeVesc fake(behavior);
   VescConfig config;
   config.imu_poll_interval = 10ms;
   config.motor_poll_interval = 15ms;
@@ -625,7 +638,7 @@ auto test_concurrent_poll_updates_keep_client_responsive() -> void {
 }
 
 void test_disconnect_unblocks_query() {
-  FakeVesc fake(false, false);
+  FakeVesc fake(FakeVesc::Behavior::without_fw_response());
   VescConfig config;
   config.imu_poll_interval = 50ms;
   config.motor_poll_interval = 100ms;
