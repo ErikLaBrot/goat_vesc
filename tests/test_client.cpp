@@ -160,6 +160,46 @@ auto wait_for_quiescence(Loader load, QuiescenceWait wait, const char* message) 
   throw std::runtime_error(message);
 }
 
+struct ScopedFd {
+  explicit ScopedFd(int fd = -1) : fd_(fd) {}
+
+  ScopedFd(const ScopedFd&) = delete;
+  ScopedFd& operator=(const ScopedFd&) = delete;
+
+  ScopedFd(ScopedFd&& other) noexcept : fd_(other.release()) {}
+
+  auto operator=(ScopedFd&& other) noexcept -> ScopedFd& {
+    if (this != &other) {
+      reset(other.release());
+    }
+    return *this;
+  }
+
+  ~ScopedFd() {
+    reset();
+  }
+
+  [[nodiscard]] auto get() const -> int {
+    return fd_;
+  }
+
+  [[nodiscard]] auto release() -> int {
+    const int released = fd_;
+    fd_ = -1;
+    return released;
+  }
+
+  void reset(int fd = -1) {
+    if (fd_ >= 0) {
+      ::close(fd_);
+    }
+    fd_ = fd;
+  }
+
+private:
+  int fd_;
+};
+
 struct BlockedWriteFakeVesc {
   BlockedWriteFakeVesc() {
     int fds[2]{-1, -1};
@@ -167,25 +207,29 @@ struct BlockedWriteFakeVesc {
       throw std::runtime_error("socketpair failed");
     }
 
-    server_fd_ = fds[0];
-    client_fd_ = fds[1];
+    ScopedFd server_fd(fds[0]);
+    ScopedFd client_fd(fds[1]);
 
     const int send_buffer_bytes = 1024;
-    if (::setsockopt(client_fd_, SOL_SOCKET, SO_SNDBUF, &send_buffer_bytes,
+    if (::setsockopt(client_fd.get(), SOL_SOCKET, SO_SNDBUF, &send_buffer_bytes,
                      sizeof(send_buffer_bytes)) != 0) {
       throw std::runtime_error("setsockopt(SO_SNDBUF) failed");
     }
 
     socklen_t actual_send_buffer_size_len = sizeof(actual_send_buffer_bytes_);
-    if (::getsockopt(client_fd_, SOL_SOCKET, SO_SNDBUF, &actual_send_buffer_bytes_,
+    if (::getsockopt(client_fd.get(), SOL_SOCKET, SO_SNDBUF, &actual_send_buffer_bytes_,
                      &actual_send_buffer_size_len) != 0) {
       throw std::runtime_error("getsockopt(SO_SNDBUF) failed");
     }
 
-    observer_fd_ = ::dup(client_fd_);
-    if (observer_fd_ < 0) {
+    ScopedFd observer_fd(::dup(client_fd.get()));
+    if (observer_fd.get() < 0) {
       throw std::runtime_error("dup failed");
     }
+
+    server_fd_ = server_fd.release();
+    client_fd_ = client_fd.release();
+    observer_fd_ = observer_fd.release();
   }
 
   BlockedWriteFakeVesc(const BlockedWriteFakeVesc&) = delete;
@@ -797,6 +841,8 @@ void test_disconnect_unblocks_blocked_write_wait() {
   assert(disconnect_future.get());
   assert(!client.is_connected());
 
+  const auto query_status = query_future.wait_for(250ms);
+  assert(query_status == std::future_status::ready);
   const auto query_result = query_future.get();
   assert(!query_result.has_value());
 }

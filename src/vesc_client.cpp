@@ -14,6 +14,7 @@ namespace goat_vesc {
 
 namespace {
 using SteadyClock = std::chrono::steady_clock;
+constexpr auto kWriteWaitPollInterval = std::chrono::milliseconds(50);
 
 int baud_to_constant(int baud) {
   switch (baud) {
@@ -649,8 +650,13 @@ bool VescClient::wait_until_writable() {
     FD_SET(fd_, &wfds);
     FD_SET(wake_pipe_[0], &rfds);
 
+    struct timeval timeout {};
+    timeout.tv_sec = static_cast<decltype(timeout.tv_sec)>(kWriteWaitPollInterval.count() / 1000);
+    timeout.tv_usec =
+        static_cast<decltype(timeout.tv_usec)>((kWriteWaitPollInterval.count() % 1000) * 1000);
+
     const int nfds = std::max(fd_, wake_pipe_[0]) + 1;
-    const int rc = ::select(nfds, &rfds, &wfds, nullptr, nullptr);
+    const int rc = ::select(nfds, &rfds, &wfds, nullptr, &timeout);
     if (rc > 0) {
       if (FD_ISSET(wake_pipe_[0], &rfds)) {
         drain_fd(wake_pipe_[0]);
@@ -663,7 +669,7 @@ bool VescClient::wait_until_writable() {
       }
       continue;
     }
-    if (rc < 0 && errno == EINTR) {
+    if (rc == 0 || errno == EINTR) {
       continue;
     }
     return false;
