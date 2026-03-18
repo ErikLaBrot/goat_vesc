@@ -171,14 +171,27 @@ struct BlockedWriteFakeVesc {
     client_fd_ = fds[1];
 
     const int send_buffer_bytes = 1024;
-    (void)::setsockopt(client_fd_, SOL_SOCKET, SO_SNDBUF, &send_buffer_bytes,
-                       sizeof(send_buffer_bytes));
+    if (::setsockopt(client_fd_, SOL_SOCKET, SO_SNDBUF, &send_buffer_bytes,
+                     sizeof(send_buffer_bytes)) != 0) {
+      throw std::runtime_error("setsockopt(SO_SNDBUF) failed");
+    }
+
+    socklen_t actual_send_buffer_size_len = sizeof(actual_send_buffer_bytes_);
+    if (::getsockopt(client_fd_, SOL_SOCKET, SO_SNDBUF, &actual_send_buffer_bytes_,
+                     &actual_send_buffer_size_len) != 0) {
+      throw std::runtime_error("getsockopt(SO_SNDBUF) failed");
+    }
 
     observer_fd_ = ::dup(client_fd_);
     if (observer_fd_ < 0) {
       throw std::runtime_error("dup failed");
     }
   }
+
+  BlockedWriteFakeVesc(const BlockedWriteFakeVesc&) = delete;
+  BlockedWriteFakeVesc& operator=(const BlockedWriteFakeVesc&) = delete;
+  BlockedWriteFakeVesc(BlockedWriteFakeVesc&&) = delete;
+  BlockedWriteFakeVesc& operator=(BlockedWriteFakeVesc&&) = delete;
 
   ~BlockedWriteFakeVesc() {
     if (observer_fd_ >= 0) {
@@ -203,11 +216,21 @@ struct BlockedWriteFakeVesc {
   }
 
   void wait_until_blocked(std::chrono::milliseconds timeout) const {
-    wait_until([this] { return !is_writable(observer_fd_); }, timeout,
-               "client transport never reached blocked-write state");
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (!is_writable(observer_fd_)) {
+        return;
+      }
+      std::this_thread::sleep_for(5ms);
+    }
+
+    throw std::runtime_error("client transport never reached blocked-write state; actual "
+                             "SO_SNDBUF=" +
+                             std::to_string(actual_send_buffer_bytes_));
   }
 
 private:
+  int actual_send_buffer_bytes_{0};
   int server_fd_{-1};
   int client_fd_{-1};
   int observer_fd_{-1};

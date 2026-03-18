@@ -66,6 +66,14 @@ bool open_serial(const std::string& path, int baud, int& fd_out) {
   return true;
 }
 
+bool set_nonblocking(int fd) {
+  const int flags = ::fcntl(fd, F_GETFL, 0);
+  if (flags < 0) {
+    return false;
+  }
+  return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
 std::optional<std::chrono::microseconds> micros_until(const SteadyClock::time_point& deadline,
                                                       const SteadyClock::time_point& now) {
   if (deadline <= now) {
@@ -74,6 +82,7 @@ std::optional<std::chrono::microseconds> micros_until(const SteadyClock::time_po
   return std::chrono::duration_cast<std::chrono::microseconds>(deadline - now);
 }
 
+// Callers must pass a non-blocking fd so draining stops at EAGAIN/EWOULDBLOCK.
 void drain_fd(int fd) {
   if (fd < 0) {
     return;
@@ -172,12 +181,15 @@ bool VescClient::connect() {
     return false;
   }
 
-  const int fd_flags = ::fcntl(fd_, F_GETFL, 0);
-  if (fd_flags >= 0) {
-    (void)::fcntl(fd_, F_SETFL, fd_flags | O_NONBLOCK);
+  if (!set_nonblocking(fd_) || !set_nonblocking(wake_pipe_[0]) || !set_nonblocking(wake_pipe_[1])) {
+    ::close(fd_);
+    fd_ = -1;
+    ::close(wake_pipe_[0]);
+    wake_pipe_[0] = -1;
+    ::close(wake_pipe_[1]);
+    wake_pipe_[1] = -1;
+    return false;
   }
-  (void)::fcntl(wake_pipe_[0], F_SETFL, O_NONBLOCK);
-  (void)::fcntl(wake_pipe_[1], F_SETFL, O_NONBLOCK);
 
   parser_.reset();
   {
