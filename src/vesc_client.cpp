@@ -14,6 +14,7 @@ namespace goat_vesc {
 
 namespace {
 using SteadyClock = std::chrono::steady_clock;
+constexpr auto kWriteWaitPollInterval = std::chrono::milliseconds(50);
 
 int baud_to_constant(int baud) {
   switch (baud) {
@@ -66,12 +67,31 @@ bool open_serial(const std::string& path, int baud, int& fd_out) {
   return true;
 }
 
+bool set_nonblocking(int fd) {
+  const int flags = ::fcntl(fd, F_GETFL, 0);
+  if (flags < 0) {
+    return false;
+  }
+  return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
 std::optional<std::chrono::microseconds> micros_until(const SteadyClock::time_point& deadline,
                                                       const SteadyClock::time_point& now) {
   if (deadline <= now) {
     return std::chrono::microseconds::zero();
   }
   return std::chrono::duration_cast<std::chrono::microseconds>(deadline - now);
+}
+
+// Callers must pass a non-blocking fd so draining stops at EAGAIN/EWOULDBLOCK.
+void drain_fd(int fd) {
+  if (fd < 0) {
+    return;
+  }
+
+  std::uint8_t buffer[64];
+  while (::read(fd, buffer, sizeof(buffer)) > 0) {
+  }
 }
 
 template <typename CallbackMap, typename Sample>
@@ -162,12 +182,15 @@ bool VescClient::connect() {
     return false;
   }
 
-  const int fd_flags = ::fcntl(fd_, F_GETFL, 0);
-  if (fd_flags >= 0) {
-    (void)::fcntl(fd_, F_SETFL, fd_flags | O_NONBLOCK);
+  if (!set_nonblocking(fd_) || !set_nonblocking(wake_pipe_[0]) || !set_nonblocking(wake_pipe_[1])) {
+    ::close(fd_);
+    fd_ = -1;
+    ::close(wake_pipe_[0]);
+    wake_pipe_[0] = -1;
+    ::close(wake_pipe_[1]);
+    wake_pipe_[1] = -1;
+    return false;
   }
-  (void)::fcntl(wake_pipe_[0], F_SETFL, O_NONBLOCK);
-  (void)::fcntl(wake_pipe_[1], F_SETFL, O_NONBLOCK);
 
   parser_.reset();
   {
@@ -419,9 +442,7 @@ void VescClient::io_loop() {
     }
 
     if (FD_ISSET(wake_pipe_[0], &rfds)) {
-      std::uint8_t buffer[64];
-      while (::read(wake_pipe_[0], buffer, sizeof(buffer)) > 0) {
-      }
+      drain_fd(wake_pipe_[0]);
     }
 
     if (FD_ISSET(fd_, &rfds)) {
@@ -652,15 +673,41 @@ bool VescClient::write_packet(const std::vector<std::uint8_t>& pkt) {
 
 bool VescClient::wait_until_writable() {
   while (running_.load()) {
+    fd_set rfds;
     fd_set wfds;
+    FD_ZERO(&rfds);
     FD_ZERO(&wfds);
     FD_SET(fd_, &wfds);
+    FD_SET(wake_pipe_[0], &rfds);
 
-    const int rc = ::select(fd_ + 1, nullptr, &wfds, nullptr, nullptr);
+    struct timeval timeout {};
+    timeout.tv_sec = static_cast<decltype(timeout.tv_sec)>(kWriteWaitPollInterval.count() / 1000);
+    timeout.tv_usec =
+        static_cast<decltype(timeout.tv_usec)>((kWriteWaitPollInterval.count() % 1000) * 1000);
+
+    const int nfds = std::max(fd_, wake_pipe_[0]) + 1;
+    const int rc = ::select(nfds, &rfds, &wfds, nullptr, &timeout);
     if (rc > 0) {
-      return true;
+      const bool wake_ready = FD_ISSET(wake_pipe_[0], &rfds);
+      const bool fd_writable = FD_ISSET(fd_, &wfds);
+
+      if (wake_ready) {
+        drain_fd(wake_pipe_[0]);
+        if (!running_.load()) {
+          return false;
+        }
+      }
+      if (fd_writable) {
+        return true;
+      }
+
+      // A wake-only event means state changed elsewhere; loop to re-check it.
+      continue;
     }
-    if (rc < 0 && errno == EINTR) {
+    if (rc == 0) {
+      continue;
+    }
+    if (errno == EINTR) {
       continue;
     }
     return false;
