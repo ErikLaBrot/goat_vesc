@@ -1148,6 +1148,7 @@ void test_disconnect_cleans_up_after_async_transport_failure() {
              "async transport failure did not stop the client");
 
   client.disconnect();
+  client.disconnect();
 
   assert(!client.is_connected());
   assert(!VescClientTestAccess::io_thread_joinable(client));
