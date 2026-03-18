@@ -467,18 +467,9 @@ void VescClient::io_loop() {
 
     const auto after_io = SteadyClock::now();
 
-    if (auto poll = make_due_poll_request(imu_channel_, after_io)) {
-      if (!write_packet(poll->packet)) {
-        running_.store(false);
-        break;
-      }
-      std::lock_guard lock(scheduler_mutex_);
-      in_flight_request_ = std::move(*poll);
-      continue;
-    }
-
-    if (auto poll = make_due_poll_request(motor_channel_, after_io)) {
-      if (!write_packet(poll->packet)) {
+    if (PollChannel* poll_channel = select_due_poll_channel(after_io)) {
+      auto poll = make_due_poll_request(*poll_channel, after_io);
+      if (!poll || !write_packet(poll->packet)) {
         running_.store(false);
         break;
       }
@@ -690,6 +681,32 @@ void VescClient::unsubscribe_imu(std::size_t id) {
 void VescClient::unsubscribe_motor_state(std::size_t id) {
   std::lock_guard lock(callback_mutex_);
   motor_callbacks_.erase(id);
+}
+
+VescClient::PollChannel* VescClient::select_due_poll_channel(const SteadyClock::time_point& now) {
+  PollChannel* selected = nullptr;
+  SteadyClock::time_point selected_due{};
+
+  for (PollChannel* channel : {&imu_channel_, &motor_channel_}) {
+    const auto interval_ms = channel->interval_ms.load();
+    if (interval_ms <= 0) {
+      continue;
+    }
+
+    const auto due =
+        channel->next_due.time_since_epoch().count() == 0 ? now : channel->next_due;
+    if (due > now) {
+      continue;
+    }
+
+    if (!selected || due < selected_due ||
+        (due == selected_due && channel->kind == PollChannel::Kind::Imu)) {
+      selected = channel;
+      selected_due = due;
+    }
+  }
+
+  return selected;
 }
 
 std::optional<VescClient::ScheduledRequest>
