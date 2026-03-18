@@ -12,7 +12,7 @@ trim_trailing_whitespace = true
 # C++ files
 [*.{cpp,cc,cxx,h,hpp,hxx}]
 indent_style = space
-indent_size = 4
+indent_size = 2
 
 # CMake files
 [CMakeLists.txt]

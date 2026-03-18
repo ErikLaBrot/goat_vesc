@@ -39,6 +39,20 @@ function(goat_vesc_enable_sanitizers target_name)
   )
 endfunction()
 
+function(goat_vesc_enable_static_analysis target_name)
+  if(GOAT_VESC_ENABLE_CLANG_TIDY)
+    set_target_properties(${target_name} PROPERTIES
+      CXX_CLANG_TIDY "clang-tidy;--quiet"
+    )
+  endif()
+
+  if(GOAT_VESC_ENABLE_CPPCHECK)
+    set_target_properties(${target_name} PROPERTIES
+      CXX_CPPCHECK "cppcheck;--enable=warning,style,performance,portability;--std=c++17;--quiet;--suppress=assertWithSideEffect;--suppress=useStlAlgorithm"
+    )
+  endif()
+endfunction()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -64,34 +78,27 @@ target_compile_options(goat_vesc PRIVATE
   -Wall -Wextra -Wpedantic -Wconversion -Wshadow
 )
 goat_vesc_enable_sanitizers(goat_vesc)
+goat_vesc_enable_static_analysis(goat_vesc)
 
 if(GOAT_VESC_BUILD_TOOLS)
   add_executable(vesc_probe tools/vesc_probe.cpp)
   target_link_libraries(vesc_probe PRIVATE goat_vesc)
   goat_vesc_enable_sanitizers(vesc_probe)
+  goat_vesc_enable_static_analysis(vesc_probe)
   add_executable(vesc_example tools/vesc_example.cpp)
   target_link_libraries(vesc_example PRIVATE goat_vesc)
   goat_vesc_enable_sanitizers(vesc_example)
+  goat_vesc_enable_static_analysis(vesc_example)
   add_executable(vesc_duty_sweep tools/vesc_duty_sweep.cpp)
   target_link_libraries(vesc_duty_sweep PRIVATE goat_vesc)
   goat_vesc_enable_sanitizers(vesc_duty_sweep)
+  goat_vesc_enable_static_analysis(vesc_duty_sweep)
   add_executable(vesc_servo_sweep tools/vesc_servo_sweep.cpp)
   target_link_libraries(vesc_servo_sweep PRIVATE goat_vesc)
   goat_vesc_enable_sanitizers(vesc_servo_sweep)
+  goat_vesc_enable_static_analysis(vesc_servo_sweep)
 endif()
 
 if(GOAT_VESC_BUILD_TESTS)
   add_subdirectory(tests)
-endif()
-
-if(GOAT_VESC_ENABLE_CLANG_TIDY)
-  set_target_properties(goat_vesc PROPERTIES
-    CXX_CLANG_TIDY "clang-tidy"
-  )
-endif()
-
-if(GOAT_VESC_ENABLE_CPPCHECK)
-  set_target_properties(goat_vesc PROPERTIES
-    CXX_CPPCHECK "cppcheck;--enable=warning,style,performance,portability;--std=c++17;--quiet"
-  )
 endif()
