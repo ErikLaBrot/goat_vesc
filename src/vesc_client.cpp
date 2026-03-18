@@ -144,7 +144,8 @@ std::vector<std::string> VescClient::find_devices() {
   return result;
 }
 
-VescClient::VescClient(VescConfig config) : config_(std::move(config)) {
+VescClient::VescClient(VescConfig config)
+    : config_(std::move(config)), callback_registry_(std::make_shared<CallbackRegistry>()) {
   imu_channel_.interval_ms.store(config_.imu_poll_interval.count());
   motor_channel_.interval_ms.store(config_.motor_poll_interval.count());
 }
@@ -267,17 +268,25 @@ std::optional<VescIMUData> VescClient::latest_imu() const {
 }
 
 VescClient::SubscriptionHandle VescClient::subscribe_imu(ImuCallback callback) {
-  std::lock_guard lock(callback_mutex_);
-  const std::size_t id = next_subscription_id_++;
-  imu_callbacks_.emplace(id, std::move(callback));
-  return SubscriptionHandle([this, id] { unsubscribe_imu(id); });
+  const auto callbacks = callback_registry_;
+  std::lock_guard callbacks_lock(callbacks->mutex);
+  const std::size_t id = callbacks->next_subscription_id++;
+  callbacks->imu_callbacks.emplace(id, std::move(callback));
+  return SubscriptionHandle([callbacks, id] {
+    std::lock_guard unsubscribe_lock(callbacks->mutex);
+    callbacks->imu_callbacks.erase(id);
+  });
 }
 
 VescClient::SubscriptionHandle VescClient::subscribe_motor_state(MotorStateCallback callback) {
-  std::lock_guard lock(callback_mutex_);
-  const std::size_t id = next_subscription_id_++;
-  motor_callbacks_.emplace(id, std::move(callback));
-  return SubscriptionHandle([this, id] { unsubscribe_motor_state(id); });
+  const auto callbacks = callback_registry_;
+  std::lock_guard callbacks_lock(callbacks->mutex);
+  const std::size_t id = callbacks->next_subscription_id++;
+  callbacks->motor_callbacks.emplace(id, std::move(callback));
+  return SubscriptionHandle([callbacks, id] {
+    std::lock_guard unsubscribe_lock(callbacks->mutex);
+    callbacks->motor_callbacks.erase(id);
+  });
 }
 
 bool VescClient::set_rpm(std::int32_t rpm) {
@@ -716,19 +725,21 @@ bool VescClient::wait_until_writable() {
 }
 
 void VescClient::publish_imu(const VescIMUData& data) {
+  const auto registry = callback_registry_;
   std::unordered_map<std::size_t, ImuCallback> callbacks;
   {
-    std::lock_guard lock(callback_mutex_);
-    callbacks = imu_callbacks_;
+    std::lock_guard lock(registry->mutex);
+    callbacks = registry->imu_callbacks;
   }
   invoke_callbacks(callbacks, data);
 }
 
 void VescClient::publish_motor_state(const VescMotorState& state) {
+  const auto registry = callback_registry_;
   std::unordered_map<std::size_t, MotorStateCallback> callbacks;
   {
-    std::lock_guard lock(callback_mutex_);
-    callbacks = motor_callbacks_;
+    std::lock_guard lock(registry->mutex);
+    callbacks = registry->motor_callbacks;
   }
   invoke_callbacks(callbacks, state);
 }
@@ -753,16 +764,6 @@ void VescClient::clear_pending_work() {
   if (in_flight && in_flight->on_timeout) {
     in_flight->on_timeout();
   }
-}
-
-void VescClient::unsubscribe_imu(std::size_t id) {
-  std::lock_guard lock(callback_mutex_);
-  imu_callbacks_.erase(id);
-}
-
-void VescClient::unsubscribe_motor_state(std::size_t id) {
-  std::lock_guard lock(callback_mutex_);
-  motor_callbacks_.erase(id);
 }
 
 VescClient::PollChannel* VescClient::select_due_poll_channel(const SteadyClock::time_point& now) {

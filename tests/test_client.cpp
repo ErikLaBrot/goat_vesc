@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <future>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -41,6 +42,18 @@ struct VescClientTestAccess {
     std::lock_guard lock(client.scheduler_mutex_);
     const auto it = client.stale_query_reply_counts_.find(id);
     return it == client.stale_query_reply_counts_.end() ? 0U : it->second;
+  }
+
+  static auto imu_subscription_count(const VescClient& client) -> std::size_t {
+    const auto callbacks = client.callback_registry_;
+    std::lock_guard lock(callbacks->mutex);
+    return callbacks->imu_callbacks.size();
+  }
+
+  static auto motor_subscription_count(const VescClient& client) -> std::size_t {
+    const auto callbacks = client.callback_registry_;
+    std::lock_guard lock(callbacks->mutex);
+    return callbacks->motor_callbacks.size();
   }
 };
 
@@ -129,6 +142,8 @@ bool is_writable(int fd) {
   struct timeval timeout {};
   const int rc = ::select(fd + 1, nullptr, &wfds, nullptr, &timeout);
   return rc > 0 && FD_ISSET(fd, &wfds);
+}
+
 bool try_write_all(int fd, const std::vector<std::uint8_t>& bytes) {
   const std::uint8_t* cursor = bytes.data();
   std::size_t remaining = bytes.size();
@@ -566,6 +581,66 @@ void test_client_polling_and_subscriptions() {
 
   (void)imu_handle;
   (void)motor_handle;
+}
+
+void test_subscription_cleanup_after_disconnect() {
+  FakeVesc fake;
+  VescConfig config;
+  config.imu_poll_interval = 20ms;
+  config.motor_poll_interval = 30ms;
+  config.poll_response_timeout = 15ms;
+  config.query_guard_window = 5ms;
+  config.open_serial_fn = [&fake](const VescConfig&, int& fd_out) {
+    return fake.open_client_fd(fd_out);
+  };
+
+  VescClient client(config);
+  std::atomic<int> imu_callbacks{0};
+  std::atomic<int> motor_callbacks{0};
+
+  auto imu_handle = client.subscribe_imu([&](const VescIMUData&) { ++imu_callbacks; });
+  auto motor_handle = client.subscribe_motor_state([&](const VescMotorState&) { ++motor_callbacks; });
+
+  assert(VescClientTestAccess::imu_subscription_count(client) == 1);
+  assert(VescClientTestAccess::motor_subscription_count(client) == 1);
+
+  assert(client.connect());
+  wait_until([&] { return imu_callbacks.load() >= 1; }, 500ms, "imu callback never fired");
+  wait_until([&] { return motor_callbacks.load() >= 1; }, 500ms, "motor callback never fired");
+
+  client.disconnect();
+
+  imu_handle.reset();
+  motor_handle.reset();
+
+  assert(!imu_handle);
+  assert(!motor_handle);
+  assert(VescClientTestAccess::imu_subscription_count(client) == 0);
+  assert(VescClientTestAccess::motor_subscription_count(client) == 0);
+  assert(!client.is_connected());
+}
+
+void test_subscription_handle_can_outlive_client_destruction() {
+  std::optional<VescClient::SubscriptionHandle> imu_handle;
+  std::optional<VescClient::SubscriptionHandle> motor_handle;
+
+  {
+    VescClient client(VescConfig{});
+    imu_handle.emplace(client.subscribe_imu([](const VescIMUData&) {}));
+    motor_handle.emplace(client.subscribe_motor_state([](const VescMotorState&) {}));
+
+    assert(VescClientTestAccess::imu_subscription_count(client) == 1);
+    assert(VescClientTestAccess::motor_subscription_count(client) == 1);
+  }
+
+  assert(imu_handle.has_value());
+  assert(motor_handle.has_value());
+
+  imu_handle->reset();
+  motor_handle->reset();
+
+  assert(!*imu_handle);
+  assert(!*motor_handle);
 }
 
 void test_poll_timeout_recovers() {
@@ -1015,6 +1090,8 @@ void test_command_rejected_after_disconnect_state_wins_queue_race() {
 
 int main() {
   test_client_polling_and_subscriptions();
+  test_subscription_cleanup_after_disconnect();
+  test_subscription_handle_can_outlive_client_destruction();
   test_poll_timeout_recovers();
   test_imu_timeout_does_not_starve_motor_polling();
   test_control_command_delivery();
