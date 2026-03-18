@@ -159,6 +159,8 @@ bool VescClient::connect() {
     return true;
   }
 
+  cleanup_transport_state();
+
   if (config_.open_serial_fn) {
     if (!config_.open_serial_fn(config_, fd_)) {
       return false;
@@ -215,14 +217,14 @@ bool VescClient::connect() {
 void VescClient::disconnect() {
   {
     std::lock_guard lock(scheduler_mutex_);
-    if (!running_.load()) {
-      return;
-    }
     running_.store(false);
   }
 
   wake_io_thread();
+  cleanup_transport_state();
+}
 
+void VescClient::cleanup_transport_state() {
   if (io_thread_.joinable()) {
     io_thread_.join();
   }
