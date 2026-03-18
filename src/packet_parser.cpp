@@ -11,7 +11,6 @@ namespace {
 
 constexpr std::uint8_t kStartShort = 2;
 constexpr std::uint8_t kStartLong16 = 3;
-constexpr std::uint8_t kStartLong24 = 4;
 constexpr std::uint8_t kStopByte = 3;
 
 } // namespace
@@ -102,28 +101,15 @@ VescPacketParser::try_decode_packet_(Payload& payload_out, std::size_t& discard_
         (static_cast<std::size_t>(buffer_[1]) << 8) | static_cast<std::size_t>(buffer_[2]);
 
     // Shorter packets should have used the short format
-    if (payload_len < 255 || payload_len > kMaxPayloadBytes) {
+    if (payload_len <= 255 || payload_len > kMaxPayloadBytes) {
       discard_bytes_out = header_len;
       return DecodeResult::Invalid;
     }
 
-  } else if (start == kStartLong24) {
-    header_len = 4;
-
-    if (buffer_.size() < header_len) {
-      return DecodeResult::NeedMoreData;
-    }
-
-    payload_len = (static_cast<std::size_t>(buffer_[1]) << 16) |
-                  (static_cast<std::size_t>(buffer_[2]) << 8) |
-                  static_cast<std::size_t>(buffer_[3]);
-
-    // 24-bit framed packets are unsupported under the current payload ceiling.
-    (void)payload_len;
-    discard_bytes_out = header_len;
-    return DecodeResult::Invalid;
-
   } else {
+    // With the current 512-byte payload ceiling, 0x04 is not a supported frame
+    // start byte. Drop it like any other unsupported prefix so the parser can
+    // resync on the next byte.
     discard_bytes_out = 1;
     return DecodeResult::Invalid;
   }

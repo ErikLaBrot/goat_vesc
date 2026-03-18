@@ -367,6 +367,13 @@ void test_packet_parser_rejects_invalid_medium_frame_lengths() {
   const auto expected_payload = bytes({0xE0});
 
   auto payloads =
+      parser.feed_bytes(concat_bytes({make_long16_header(255), frame_payload(expected_payload)}));
+  assert(payloads.size() == 1);
+  assert(payloads.front() == expected_payload);
+
+  parser.reset();
+
+  payloads =
       parser.feed_bytes(concat_bytes({make_long16_header(254), frame_payload(expected_payload)}));
   assert(payloads.size() == 1);
   assert(payloads.front() == expected_payload);
@@ -386,6 +393,17 @@ void test_packet_parser_rejects_unsupported_24bit_framing() {
 
   const auto payloads =
       parser.feed_bytes(concat_bytes({make_long24_header(1), frame_payload(expected_payload)}));
+
+  assert(payloads.size() == 1);
+  assert(payloads.front() == expected_payload);
+}
+
+void test_packet_parser_resyncs_after_unsupported_24bit_start_byte() {
+  VescPacketParser parser;
+  const auto expected_payload = bytes({0xF1});
+
+  const auto payloads =
+      parser.feed_bytes(concat_bytes({bytes({0x04}), frame_payload(expected_payload)}));
 
   assert(payloads.size() == 1);
   assert(payloads.front() == expected_payload);
@@ -430,6 +448,7 @@ int main() {
   test_packet_parser_reset_clears_partial_frame_state();
   test_packet_parser_rejects_invalid_medium_frame_lengths();
   test_packet_parser_rejects_unsupported_24bit_framing();
+  test_packet_parser_resyncs_after_unsupported_24bit_start_byte();
   test_packet_parser_rejects_invalid_frames();
   return 0;
 }
