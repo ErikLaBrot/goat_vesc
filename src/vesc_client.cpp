@@ -375,8 +375,14 @@ void VescClient::io_loop() {
       if (in_flight_request_) {
         tighten_wait(micros_until(in_flight_request_->deadline, now));
       }
-      if (!request_queue_.empty()) {
-        tighten_wait(micros_until(request_queue_.front().deadline, now));
+      std::optional<SteadyClock::time_point> next_query_deadline;
+      for (const auto& request : request_queue_) {
+        if (!next_query_deadline || request.deadline < *next_query_deadline) {
+          next_query_deadline = request.deadline;
+        }
+      }
+      if (next_query_deadline) {
+        tighten_wait(micros_until(*next_query_deadline, now));
       }
     }
 
@@ -501,12 +507,25 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
   }
 
   std::optional<ScheduledRequest> completed_request;
+  bool drop_stale_query_reply = false;
   {
     std::lock_guard lock(scheduler_mutex_);
-    if (in_flight_request_ && in_flight_request_->expected_id == payload[0]) {
+    auto stale_reply = stale_query_reply_counts_.find(payload[0]);
+    if (stale_reply != stale_query_reply_counts_.end()) {
+      if (stale_reply->second > 1) {
+        --stale_reply->second;
+      } else {
+        stale_query_reply_counts_.erase(stale_reply);
+      }
+      drop_stale_query_reply = true;
+    } else if (in_flight_request_ && in_flight_request_->expected_id == payload[0]) {
       completed_request = std::move(in_flight_request_);
       in_flight_request_.reset();
     }
+  }
+
+  if (drop_stale_query_reply) {
+    return;
   }
 
   if (completed_request) {
@@ -544,25 +563,36 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
 
 void VescClient::handle_request_timeout() {
   std::optional<ScheduledRequest> timed_out;
+  std::vector<ScheduledRequest> expired_queries;
   {
     std::lock_guard lock(scheduler_mutex_);
     const auto now = SteadyClock::now();
     if (in_flight_request_ && in_flight_request_->deadline <= now) {
       timed_out = std::move(in_flight_request_);
+      if (timed_out->kind == ScheduledRequest::Kind::FwVersion) {
+        // Only a request that was actually sent can still yield a stale late reply.
+        ++stale_query_reply_counts_[timed_out->expected_id];
+      }
       in_flight_request_.reset();
     }
 
-    while (!request_queue_.empty() && request_queue_.front().deadline <= now) {
-      auto expired = std::move(request_queue_.front());
-      request_queue_.pop_front();
-      if (expired.on_timeout) {
-        expired.on_timeout();
+    for (auto it = request_queue_.begin(); it != request_queue_.end();) {
+      if (it->deadline <= now) {
+        expired_queries.push_back(std::move(*it));
+        it = request_queue_.erase(it);
+      } else {
+        ++it;
       }
     }
   }
 
   if (timed_out && timed_out->on_timeout) {
     timed_out->on_timeout();
+  }
+  for (auto& expired : expired_queries) {
+    if (expired.on_timeout) {
+      expired.on_timeout();
+    }
   }
 }
 
@@ -665,6 +695,7 @@ void VescClient::clear_pending_work() {
     queued_requests.swap(request_queue_);
     in_flight = std::move(in_flight_request_);
     in_flight_request_.reset();
+    stale_query_reply_counts_.clear();
   }
 
   for (auto& request : queued_requests) {
@@ -750,32 +781,55 @@ VescClient::make_due_poll_request(PollChannel& channel, const SteadyClock::time_
 
 std::optional<VescClient::ScheduledRequest>
 VescClient::dequeue_ready_query(const SteadyClock::time_point& now) {
-  std::lock_guard lock(scheduler_mutex_);
-  while (!request_queue_.empty() && request_queue_.front().deadline <= now) {
-    auto expired = std::move(request_queue_.front());
-    request_queue_.pop_front();
+  std::vector<ScheduledRequest> expired_queries;
+  std::optional<ScheduledRequest> ready_query;
+  {
+    std::lock_guard lock(scheduler_mutex_);
+    for (auto it = request_queue_.begin(); it != request_queue_.end();) {
+      if (it->deadline <= now) {
+        expired_queries.push_back(std::move(*it));
+        it = request_queue_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    if (!request_queue_.empty()) {
+      // connect() seeds next_due before the I/O loop runs, so treating a zero epoch as
+      // "due now" here is only a fallback for partially initialized test setups.
+      const auto imu_next_due = imu_channel_.next_due.time_since_epoch().count() == 0 ? now
+                                                                                       : imu_channel_.next_due;
+      const auto motor_next_due = motor_channel_.next_due.time_since_epoch().count() == 0
+                                      ? now
+                                      : motor_channel_.next_due;
+      const auto time_until_imu = imu_channel_.interval_ms.load() > 0
+                                      ? imu_next_due - now
+                                      : SteadyClock::duration::max();
+      const auto time_until_motor = motor_channel_.interval_ms.load() > 0
+                                        ? motor_next_due - now
+                                        : SteadyClock::duration::max();
+      const auto next_poll_due = std::min(time_until_imu, time_until_motor);
+
+      if (next_poll_due > config_.query_guard_window) {
+        for (auto it = request_queue_.begin(); it != request_queue_.end(); ++it) {
+          if (stale_query_reply_counts_.count(it->expected_id) != 0U) {
+            // If a stale reply never arrives, the queued query still completes by expiry.
+            continue;
+          }
+          ready_query = std::move(*it);
+          request_queue_.erase(it);
+          break;
+        }
+      }
+    }
+  }
+
+  for (auto& expired : expired_queries) {
     if (expired.on_timeout) {
       expired.on_timeout();
     }
   }
-  if (request_queue_.empty()) {
-    return std::nullopt;
-  }
 
-  const auto time_until_imu = imu_channel_.interval_ms.load() > 0 ? imu_channel_.next_due - now
-                                                                  : SteadyClock::duration::max();
-  const auto time_until_motor = motor_channel_.interval_ms.load() > 0
-                                    ? motor_channel_.next_due - now
-                                    : SteadyClock::duration::max();
-  const auto next_poll_due = std::min(time_until_imu, time_until_motor);
-
-  if (next_poll_due <= config_.query_guard_window) {
-    return std::nullopt;
-  }
-
-  ScheduledRequest request = std::move(request_queue_.front());
-  request_queue_.pop_front();
-  return request;
+  return ready_query;
 }
 
 } // namespace goat_vesc

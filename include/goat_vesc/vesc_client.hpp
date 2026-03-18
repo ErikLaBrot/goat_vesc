@@ -199,6 +199,7 @@ private:
   std::deque<std::vector<std::uint8_t>> command_queue_;
   std::deque<ScheduledRequest> request_queue_;
   std::optional<ScheduledRequest> in_flight_request_;
+  std::unordered_map<std::uint8_t, std::size_t> stale_query_reply_counts_;
 
   mutable std::mutex cache_mutex_;
   std::optional<VescMotorState> motor_state_cache_;
