@@ -658,18 +658,26 @@ bool VescClient::wait_until_writable() {
     const int nfds = std::max(fd_, wake_pipe_[0]) + 1;
     const int rc = ::select(nfds, &rfds, &wfds, nullptr, &timeout);
     if (rc > 0) {
-      if (FD_ISSET(wake_pipe_[0], &rfds)) {
+      const bool wake_ready = FD_ISSET(wake_pipe_[0], &rfds);
+      const bool fd_writable = FD_ISSET(fd_, &wfds);
+
+      if (wake_ready) {
         drain_fd(wake_pipe_[0]);
         if (!running_.load()) {
           return false;
         }
       }
-      if (FD_ISSET(fd_, &wfds)) {
+      if (fd_writable) {
         return true;
       }
+
+      // A wake-only event means state changed elsewhere; loop to re-check it.
       continue;
     }
-    if (rc == 0 || errno == EINTR) {
+    if (rc == 0) {
+      continue;
+    }
+    if (errno == EINTR) {
       continue;
     }
     return false;
