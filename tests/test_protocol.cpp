@@ -366,23 +366,28 @@ void test_packet_parser_rejects_invalid_medium_frame_lengths() {
   VescPacketParser parser;
   const auto expected_payload = bytes({0xE0});
 
-  auto payloads =
-      parser.feed_bytes(concat_bytes({make_long16_header(255), frame_payload(expected_payload)}));
+  auto payloads = parser.feed_bytes(make_long16_header(255));
+  assert(payloads.empty());
+
+  payloads = parser.feed_bytes(frame_payload(expected_payload));
   assert(payloads.size() == 1);
   assert(payloads.front() == expected_payload);
 
   parser.reset();
 
-  payloads =
-      parser.feed_bytes(concat_bytes({make_long16_header(254), frame_payload(expected_payload)}));
+  payloads = parser.feed_bytes(make_long16_header(254));
+  assert(payloads.empty());
+
+  payloads = parser.feed_bytes(frame_payload(expected_payload));
   assert(payloads.size() == 1);
   assert(payloads.front() == expected_payload);
 
   parser.reset();
 
-  payloads = parser.feed_bytes(
-      concat_bytes({make_long16_header(static_cast<std::uint16_t>(kMaxPayloadBytes + 1U)),
-                    frame_payload(expected_payload)}));
+  payloads = parser.feed_bytes(make_long16_header(static_cast<std::uint16_t>(kMaxPayloadBytes + 1U)));
+  assert(payloads.empty());
+
+  payloads = parser.feed_bytes(frame_payload(expected_payload));
   assert(payloads.size() == 1);
   assert(payloads.front() == expected_payload);
 }
@@ -391,9 +396,10 @@ void test_packet_parser_rejects_unsupported_24bit_framing() {
   VescPacketParser parser;
   const auto expected_payload = bytes({0xF0});
 
-  const auto payloads =
-      parser.feed_bytes(concat_bytes({make_long24_header(1), frame_payload(expected_payload)}));
+  auto payloads = parser.feed_bytes(make_long24_header(1));
+  assert(payloads.empty());
 
+  payloads = parser.feed_bytes(frame_payload(expected_payload));
   assert(payloads.size() == 1);
   assert(payloads.front() == expected_payload);
 }
@@ -402,9 +408,10 @@ void test_packet_parser_resyncs_after_unsupported_24bit_start_byte() {
   VescPacketParser parser;
   const auto expected_payload = bytes({0xF1});
 
-  const auto payloads =
-      parser.feed_bytes(concat_bytes({bytes({0x04}), frame_payload(expected_payload)}));
+  auto payloads = parser.feed_bytes(bytes({0x04}));
+  assert(payloads.empty());
 
+  payloads = parser.feed_bytes(frame_payload(expected_payload));
   assert(payloads.size() == 1);
   assert(payloads.front() == expected_payload);
 }
