@@ -21,6 +21,24 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+namespace goat_vesc {
+
+struct VescClientTestAccess {
+  static auto scheduler_mutex(VescClient& client) -> std::mutex& {
+    return client.scheduler_mutex_;
+  }
+
+  static auto running(VescClient& client) -> std::atomic<bool>& {
+    return client.running_;
+  }
+
+  static auto command_queue(VescClient& client) -> std::deque<std::vector<std::uint8_t>>& {
+    return client.command_queue_;
+  }
+};
+
+} // namespace goat_vesc
+
 namespace {
 
 using namespace goat_vesc;
@@ -660,6 +678,26 @@ void test_disconnect_unblocks_query() {
   assert(!result.has_value());
 }
 
+void test_command_rejected_after_disconnect_state_wins_queue_race() {
+  VescClient client(VescConfig{});
+  auto& scheduler_mutex = VescClientTestAccess::scheduler_mutex(client);
+  auto& running = VescClientTestAccess::running(client);
+
+  std::unique_lock scheduler_lock(scheduler_mutex);
+  running.store(true);
+
+  auto submit = std::async(std::launch::async, [&client] { return client.set_rpm(1234); });
+
+  wait_until([&] { return submit.wait_for(0ms) == std::future_status::timeout; }, 100ms,
+             "command submission did not block behind the scheduler lock");
+
+  running.store(false);
+  scheduler_lock.unlock();
+
+  assert(!submit.get());
+  assert(VescClientTestAccess::command_queue(client).empty());
+}
+
 } // namespace
 
 int main() {
@@ -671,5 +709,6 @@ int main() {
   test_runtime_poll_interval_updates();
   test_concurrent_poll_updates_keep_client_responsive();
   test_disconnect_unblocks_query();
+  test_command_rejected_after_disconnect_state_wins_queue_race();
   return 0;
 }

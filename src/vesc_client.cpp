@@ -189,8 +189,12 @@ bool VescClient::connect() {
 }
 
 void VescClient::disconnect() {
-  if (!running_.exchange(false)) {
-    return;
+  {
+    std::lock_guard lock(scheduler_mutex_);
+    if (!running_.load()) {
+      return;
+    }
+    running_.store(false);
   }
 
   wake_io_thread();
@@ -571,11 +575,11 @@ void VescClient::schedule_query(ScheduledRequest request) {
 }
 
 bool VescClient::enqueue_command(std::vector<std::uint8_t> packet) {
-  if (!running_.load()) {
-    return false;
-  }
   {
     std::lock_guard lock(scheduler_mutex_);
+    if (!running_.load()) {
+      return false;
+    }
     command_queue_.push_back(std::move(packet));
   }
   wake_io_thread();

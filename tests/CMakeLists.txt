@@ -6,6 +6,7 @@ add_test(NAME test_protocol COMMAND test_protocol)
 
 add_executable(test_client test_client.cpp)
 target_link_libraries(test_client PRIVATE goat_vesc)
+target_compile_definitions(test_client PRIVATE GOAT_VESC_TESTING=1)
 goat_vesc_enable_sanitizers(test_client)
 goat_vesc_enable_static_analysis(test_client)
 add_test(NAME test_client COMMAND test_client)

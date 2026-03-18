@@ -65,6 +65,7 @@ If the client detects a transport failure:
 - the I/O loop exits
 - outstanding blocking queries complete with `std::nullopt`
 - future command submissions return `false`
+- a command API returns `true` only while the command is still deliverable when the call returns
 - no more polling or command traffic is sent
 
 What the library does **not** currently do:

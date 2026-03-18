@@ -129,7 +129,12 @@ public:
    */
   SubscriptionHandle subscribe_motor_state(MotorStateCallback callback);
 
-  /** Enqueues a `COMM_SET_RPM` command for transmission. */
+  /**
+   * Enqueues a `COMM_SET_RPM` command for transmission.
+   *
+   * Returns `true` only if the command remains queued or otherwise deliverable
+   * when the call returns.
+   */
   bool set_rpm(std::int32_t rpm);
   /** Enqueues a `COMM_SET_DUTY` command for transmission. */
   bool set_duty(float duty);
@@ -229,6 +234,10 @@ private:
   std::optional<ScheduledRequest> make_due_poll_request(PollChannel& channel,
                                                         const SteadyClock::time_point& now);
   std::optional<ScheduledRequest> dequeue_ready_query(const SteadyClock::time_point& now);
+
+#ifdef GOAT_VESC_TESTING
+  friend struct VescClientTestAccess;
+#endif
 };
 
 } // namespace goat_vesc
