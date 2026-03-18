@@ -6,6 +6,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <vector>
@@ -19,6 +20,41 @@ constexpr float kFloatTolerance = 1.0e-6f;
 
 void expect_near(float actual, float expected) {
   assert(std::fabs(actual - expected) <= kFloatTolerance);
+}
+
+std::vector<std::uint8_t> bytes(std::initializer_list<std::uint8_t> values) {
+  return {values};
+}
+
+std::vector<std::uint8_t> concat_bytes(std::initializer_list<std::vector<std::uint8_t>> chunks) {
+  std::size_t total_size = 0;
+  for (const auto& chunk : chunks) {
+    total_size += chunk.size();
+  }
+
+  std::vector<std::uint8_t> combined;
+  combined.reserve(total_size);
+  for (const auto& chunk : chunks) {
+    combined.insert(combined.end(), chunk.begin(), chunk.end());
+  }
+  return combined;
+}
+
+std::vector<std::uint8_t> make_long16_header(std::uint16_t payload_len) {
+  return {
+      0x03,
+      static_cast<std::uint8_t>((payload_len >> 8) & 0xFF),
+      static_cast<std::uint8_t>(payload_len & 0xFF),
+  };
+}
+
+std::vector<std::uint8_t> make_long24_header(std::uint32_t payload_len) {
+  return {
+      0x04,
+      static_cast<std::uint8_t>((payload_len >> 16) & 0xFF),
+      static_cast<std::uint8_t>((payload_len >> 8) & 0xFF),
+      static_cast<std::uint8_t>(payload_len & 0xFF),
+  };
 }
 
 std::vector<std::uint8_t> make_values_payload() {
@@ -222,6 +258,44 @@ void test_packet_parser_round_trip_and_resync() {
   assert(payloads.front() == expected_fw_payload);
 }
 
+void test_packet_parser_short_frame_incremental_delivery() {
+  VescPacketParser parser;
+  const auto expected_payload = bytes({0x11, 0x22, 0x33});
+  const auto framed = frame_payload(expected_payload);
+
+  for (std::size_t i = 0; i + 1 < framed.size(); ++i) {
+    assert(!parser.feed_byte(framed[i]).has_value());
+  }
+
+  const auto parsed = parser.feed_byte(framed.back());
+  assert(parsed.has_value());
+  assert(*parsed == expected_payload);
+}
+
+void test_packet_parser_emits_multiple_frames_from_one_burst() {
+  VescPacketParser parser;
+  const auto first_payload = bytes({0x01});
+  const auto second_payload = bytes({0x02, 0x03});
+
+  const auto payloads = parser.feed_bytes(
+      concat_bytes({frame_payload(first_payload), frame_payload(second_payload)}));
+
+  assert(payloads.size() == 2);
+  assert(payloads[0] == first_payload);
+  assert(payloads[1] == second_payload);
+}
+
+void test_packet_parser_resyncs_after_garbage_prefix() {
+  VescPacketParser parser;
+  const auto expected_payload = bytes({0x44, 0x55});
+
+  const auto payloads = parser.feed_bytes(
+      concat_bytes({bytes({0x00, 0x99, 0x01, 0x7F}), frame_payload(expected_payload)}));
+
+  assert(payloads.size() == 1);
+  assert(payloads.front() == expected_payload);
+}
+
 void test_packet_parser_frame_boundaries() {
   VescPacketParser parser;
 
@@ -236,6 +310,85 @@ void test_packet_parser_frame_boundaries() {
   payloads = parser.feed_bytes(frame_payload(medium_payload));
   assert(payloads.size() == 1);
   assert(payloads.front() == medium_payload);
+
+  parser.reset();
+
+  const std::vector<std::uint8_t> max_payload(kMaxPayloadBytes, 0x33);
+  payloads = parser.feed_bytes(frame_payload(max_payload));
+  assert(payloads.size() == 1);
+  assert(payloads.front() == max_payload);
+}
+
+void test_packet_parser_resyncs_after_bad_crc() {
+  VescPacketParser parser;
+  auto invalid = frame_payload(bytes({0xA0, 0xA1}));
+  invalid[invalid.size() - 2] ^= 0x01;
+
+  const auto expected_payload = bytes({0xB0});
+  const auto payloads = parser.feed_bytes(concat_bytes({invalid, frame_payload(expected_payload)}));
+
+  assert(payloads.size() == 1);
+  assert(payloads.front() == expected_payload);
+}
+
+void test_packet_parser_resyncs_after_bad_stop_byte() {
+  VescPacketParser parser;
+  auto invalid = frame_payload(bytes({0xC0, 0xC1}));
+  invalid.back() = 0x00;
+
+  const auto expected_payload = bytes({0xD0});
+  const auto payloads = parser.feed_bytes(concat_bytes({invalid, frame_payload(expected_payload)}));
+
+  assert(payloads.size() == 1);
+  assert(payloads.front() == expected_payload);
+}
+
+void test_packet_parser_reset_clears_partial_frame_state() {
+  VescPacketParser parser;
+  const auto expected_payload = bytes({0x21, 0x22});
+  const auto framed = frame_payload(expected_payload);
+
+  const std::vector<std::uint8_t> partial(framed.begin(), framed.end() - 1);
+  assert(parser.feed_bytes(partial).empty());
+
+  parser.reset();
+
+  assert(!parser.feed_byte(framed.back()).has_value());
+
+  parser.reset();
+
+  const auto payloads = parser.feed_bytes(framed);
+  assert(payloads.size() == 1);
+  assert(payloads.front() == expected_payload);
+}
+
+void test_packet_parser_rejects_invalid_medium_frame_lengths() {
+  VescPacketParser parser;
+  const auto expected_payload = bytes({0xE0});
+
+  auto payloads =
+      parser.feed_bytes(concat_bytes({make_long16_header(254), frame_payload(expected_payload)}));
+  assert(payloads.size() == 1);
+  assert(payloads.front() == expected_payload);
+
+  parser.reset();
+
+  payloads = parser.feed_bytes(
+      concat_bytes({make_long16_header(static_cast<std::uint16_t>(kMaxPayloadBytes + 1U)),
+                    frame_payload(expected_payload)}));
+  assert(payloads.size() == 1);
+  assert(payloads.front() == expected_payload);
+}
+
+void test_packet_parser_rejects_unsupported_24bit_framing() {
+  VescPacketParser parser;
+  const auto expected_payload = bytes({0xF0});
+
+  const auto payloads =
+      parser.feed_bytes(concat_bytes({make_long24_header(1), frame_payload(expected_payload)}));
+
+  assert(payloads.size() == 1);
+  assert(payloads.front() == expected_payload);
 }
 
 void test_packet_parser_rejects_invalid_frames() {
@@ -249,14 +402,6 @@ void test_packet_parser_rejects_invalid_frames() {
   auto payloads = parser.feed_bytes(zero_length_then_valid);
   assert(payloads.size() == 1);
   const std::vector<std::uint8_t> expected_fw_payload{0x00};
-  assert(payloads.front() == expected_fw_payload);
-
-  parser.reset();
-
-  std::vector<std::uint8_t> unsupported_long_then_valid{0x04, 0x00, 0x00, 0x01};
-  unsupported_long_then_valid.insert(unsupported_long_then_valid.end(), valid.begin(), valid.end());
-  payloads = parser.feed_bytes(unsupported_long_then_valid);
-  assert(payloads.size() == 1);
   assert(payloads.front() == expected_fw_payload);
 
   parser.reset();
@@ -276,7 +421,15 @@ int main() {
   test_parse_get_imu_data_full_mask();
   test_parse_get_imu_data_sparse_mask_and_rejections();
   test_packet_parser_round_trip_and_resync();
+  test_packet_parser_short_frame_incremental_delivery();
+  test_packet_parser_emits_multiple_frames_from_one_burst();
+  test_packet_parser_resyncs_after_garbage_prefix();
   test_packet_parser_frame_boundaries();
+  test_packet_parser_resyncs_after_bad_crc();
+  test_packet_parser_resyncs_after_bad_stop_byte();
+  test_packet_parser_reset_clears_partial_frame_state();
+  test_packet_parser_rejects_invalid_medium_frame_lengths();
+  test_packet_parser_rejects_unsupported_24bit_framing();
   test_packet_parser_rejects_invalid_frames();
   return 0;
 }
