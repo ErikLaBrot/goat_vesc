@@ -192,6 +192,17 @@ cmake --build build/goat_vesc
 ctest --test-dir build/goat_vesc --output-on-failure
 ```
 
+Static analysis gate:
+
+```bash
+cmake -S . -B build/goat_vesc-analysis \
+  -DGOAT_VESC_BUILD_TESTS=ON \
+  -DGOAT_VESC_BUILD_TOOLS=ON \
+  -DGOAT_VESC_ENABLE_CLANG_TIDY=ON \
+  -DGOAT_VESC_ENABLE_CPPCHECK=ON
+cmake --build build/goat_vesc-analysis
+```
+
 Sanitizer gate:
 
 ```bash

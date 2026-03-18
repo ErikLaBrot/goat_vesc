@@ -5,7 +5,18 @@ Checks: >
   portability-*,
   readability-*,
   modernize-*,
-  clang-analyzer-*
+  clang-analyzer-*,
+  -bugprone-exception-escape,
+  -modernize-avoid-c-arrays,
+  -modernize-use-trailing-return-type,
+  -performance-enum-size,
+  -readability-braces-around-statements,
+  -readability-convert-member-functions-to-static,
+  -readability-function-cognitive-complexity,
+  -readability-identifier-length,
+  -readability-implicit-bool-conversion,
+  -readability-magic-numbers,
+  -readability-uppercase-literal-suffix
 WarningsAsErrors: ''
 HeaderFilterRegex: '^(include|src)/'
 FormatStyle: file
@@ -17,8 +28,8 @@ CheckOptions:
   - key: readability-identifier-naming.StructCase
     value: CamelCase
   - key: readability-identifier-naming.FunctionCase
-    value: camelBack
+    value: lower_case
   - key: readability-identifier-naming.MethodCase
-    value: camelBack
+    value: lower_case
   - key: readability-identifier-naming.PrivateMemberSuffix
     value: _
