@@ -747,7 +747,7 @@ void test_queued_query_deadline_expires_while_older_query_waits() {
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
                                                             third_started);
   assert(!third_result.has_value());
-  assert(third_elapsed < 90ms);
+  assert(third_elapsed < 45ms);
 
   const auto second_result = second.get();
   const auto first_result = first.get();

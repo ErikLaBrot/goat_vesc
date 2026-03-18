@@ -375,8 +375,14 @@ void VescClient::io_loop() {
       if (in_flight_request_) {
         tighten_wait(micros_until(in_flight_request_->deadline, now));
       }
-      if (!request_queue_.empty()) {
-        tighten_wait(micros_until(request_queue_.front().deadline, now));
+      std::optional<SteadyClock::time_point> next_query_deadline;
+      for (const auto& request : request_queue_) {
+        if (!next_query_deadline || request.deadline < *next_query_deadline) {
+          next_query_deadline = request.deadline;
+        }
+      }
+      if (next_query_deadline) {
+        tighten_wait(micros_until(*next_query_deadline, now));
       }
     }
 
