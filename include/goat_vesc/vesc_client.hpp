@@ -183,6 +183,13 @@ private:
     std::function<void()> on_timeout;
   };
 
+  struct CallbackRegistry {
+    std::mutex mutex;
+    std::size_t next_subscription_id{1};
+    std::unordered_map<std::size_t, ImuCallback> imu_callbacks;
+    std::unordered_map<std::size_t, MotorStateCallback> motor_callbacks;
+  };
+
   VescConfig config_;
   int fd_{-1};
   int wake_pipe_[2]{-1, -1};
@@ -205,10 +212,7 @@ private:
   std::optional<VescMotorState> motor_state_cache_;
   std::optional<VescIMUData> imu_data_cache_;
 
-  std::mutex callback_mutex_;
-  std::size_t next_subscription_id_{1};
-  std::unordered_map<std::size_t, ImuCallback> imu_callbacks_;
-  std::unordered_map<std::size_t, MotorStateCallback> motor_callbacks_;
+  std::shared_ptr<CallbackRegistry> callback_registry_;
 
   PollChannel imu_channel_{PollChannel::Kind::Imu};
   PollChannel motor_channel_{PollChannel::Kind::MotorState};
@@ -228,8 +232,6 @@ private:
   void publish_imu(const VescIMUData& data);
   void publish_motor_state(const VescMotorState& state);
   void clear_pending_work();
-  void unsubscribe_imu(std::size_t id);
-  void unsubscribe_motor_state(std::size_t id);
 
   PollChannel* select_due_poll_channel(const SteadyClock::time_point& now);
   std::optional<ScheduledRequest> make_due_poll_request(PollChannel& channel,
