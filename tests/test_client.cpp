@@ -36,6 +36,12 @@ struct VescClientTestAccess {
   static auto command_queue(VescClient& client) -> std::deque<std::vector<std::uint8_t>>& {
     return client.command_queue_;
   }
+
+  static auto stale_reply_count(VescClient& client, std::uint8_t id) -> std::size_t {
+    std::lock_guard lock(client.scheduler_mutex_);
+    const auto it = client.stale_query_reply_counts_.find(id);
+    return it == client.stale_query_reply_counts_.end() ? 0U : it->second;
+  }
 };
 
 } // namespace goat_vesc
@@ -210,12 +216,14 @@ struct FakeVesc {
     if (worker_.joinable()) {
       worker_.join();
     }
+    std::vector<std::thread> response_threads;
     {
       std::lock_guard lock(response_threads_mutex_);
-      for (auto& response_thread : response_threads_) {
-        if (response_thread.joinable()) {
-          response_thread.join();
-        }
+      response_threads.swap(response_threads_);
+    }
+    for (auto& response_thread : response_threads) {
+      if (response_thread.joinable()) {
+        response_thread.join();
       }
     }
     if (server_fd_ >= 0) {
@@ -777,7 +785,12 @@ void test_late_fw_reply_does_not_satisfy_newer_query() {
   assert(blocked_elapsed < 100ms);
   assert(fake.fw_requests.load() == 1);
 
-  std::this_thread::sleep_for(100ms);
+  wait_until(
+      [&] {
+        return VescClientTestAccess::stale_reply_count(
+                   client, static_cast<std::uint8_t>(VescPacketCommID::FwVersion)) == 0U;
+      },
+      200ms, "stale fw reply was not drained");
 
   const auto recovered = client.request_fw_version(200ms);
   assert(recovered.has_value());

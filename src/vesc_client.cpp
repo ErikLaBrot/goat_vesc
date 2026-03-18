@@ -564,6 +564,7 @@ void VescClient::handle_request_timeout() {
     if (in_flight_request_ && in_flight_request_->deadline <= now) {
       timed_out = std::move(in_flight_request_);
       if (timed_out->kind == ScheduledRequest::Kind::FwVersion) {
+        // Only a request that was actually sent can still yield a stale late reply.
         ++stale_query_reply_counts_[timed_out->expected_id];
       }
       in_flight_request_.reset();
@@ -787,6 +788,8 @@ VescClient::dequeue_ready_query(const SteadyClock::time_point& now) {
       }
     }
     if (!request_queue_.empty()) {
+      // connect() seeds next_due before the I/O loop runs, so treating a zero epoch as
+      // "due now" here is only a fallback for partially initialized test setups.
       const auto imu_next_due = imu_channel_.next_due.time_since_epoch().count() == 0 ? now
                                                                                        : imu_channel_.next_due;
       const auto motor_next_due = motor_channel_.next_due.time_since_epoch().count() == 0
@@ -803,6 +806,7 @@ VescClient::dequeue_ready_query(const SteadyClock::time_point& now) {
       if (next_poll_due > config_.query_guard_window) {
         for (auto it = request_queue_.begin(); it != request_queue_.end(); ++it) {
           if (stale_query_reply_counts_.count(it->expected_id) != 0U) {
+            // If a stale reply never arrives, the queued query still completes by expiry.
             continue;
           }
           ready_query = std::move(*it);
