@@ -1,6 +1,7 @@
 #include "goat_vesc/packet_parser.hpp"
 #include "goat_vesc/protocol_ids.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -26,7 +27,8 @@ std::optional<VescPacketParser::Payload> VescPacketParser::feed_byte(std::uint8_
 
   Payload payload;
   for (;;) {
-    const auto result = try_decode_packet_(payload);
+    std::size_t discard_bytes = 0;
+    const auto result = try_decode_packet_(payload, discard_bytes);
 
     if (result == DecodeResult::Success) {
       return payload;
@@ -38,7 +40,9 @@ std::optional<VescPacketParser::Payload> VescPacketParser::feed_byte(std::uint8_
 
     // Invalid: drop one byte and try to resync
     if (!buffer_.empty()) {
-      buffer_.erase(buffer_.begin());
+      const auto discard_end =
+          buffer_.begin() + static_cast<std::ptrdiff_t>(std::min(discard_bytes, buffer_.size()));
+      buffer_.erase(buffer_.begin(), discard_end);
     } else {
       return std::nullopt;
     }
@@ -59,7 +63,10 @@ VescPacketParser::feed_bytes(const std::vector<std::uint8_t>& bytes) {
   return out;
 }
 
-VescPacketParser::DecodeResult VescPacketParser::try_decode_packet_(Payload& payload_out) {
+VescPacketParser::DecodeResult
+VescPacketParser::try_decode_packet_(Payload& payload_out, std::size_t& discard_bytes_out) {
+  discard_bytes_out = 0;
+
   if (buffer_.empty()) {
     return DecodeResult::NeedMoreData;
   }
@@ -80,6 +87,7 @@ VescPacketParser::DecodeResult VescPacketParser::try_decode_packet_(Payload& pay
 
     // VESC rejects zero-length packets
     if (payload_len < 1) {
+      discard_bytes_out = header_len;
       return DecodeResult::Invalid;
     }
 
@@ -95,6 +103,7 @@ VescPacketParser::DecodeResult VescPacketParser::try_decode_packet_(Payload& pay
 
     // Shorter packets should have used the short format
     if (payload_len < 255 || payload_len > kMaxPayloadBytes) {
+      discard_bytes_out = header_len;
       return DecodeResult::Invalid;
     }
 
@@ -111,9 +120,11 @@ VescPacketParser::DecodeResult VescPacketParser::try_decode_packet_(Payload& pay
 
     // 24-bit framed packets are unsupported under the current payload ceiling.
     (void)payload_len;
+    discard_bytes_out = header_len;
     return DecodeResult::Invalid;
 
   } else {
+    discard_bytes_out = 1;
     return DecodeResult::Invalid;
   }
 
@@ -129,6 +140,7 @@ VescPacketParser::DecodeResult VescPacketParser::try_decode_packet_(Payload& pay
   const std::size_t stop_index = payload_start + payload_len + 2;
 
   if (buffer_[stop_index] != kStopByte) {
+    discard_bytes_out = total_len;
     return DecodeResult::Invalid;
   }
 
@@ -142,6 +154,7 @@ VescPacketParser::DecodeResult VescPacketParser::try_decode_packet_(Payload& pay
   const std::uint16_t crc_calc = crc16ccitt_(payload);
 
   if (crc_rx != crc_calc) {
+    discard_bytes_out = total_len;
     return DecodeResult::Invalid;
   }
 
