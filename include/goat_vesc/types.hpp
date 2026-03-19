@@ -37,6 +37,16 @@ struct VescConfig {
   std::function<bool(const VescConfig&, int&)> open_serial_fn;
 };
 
+struct VescClientConfigSnapshot {
+  std::chrono::milliseconds motor_poll_interval{0};
+  std::chrono::milliseconds imu_poll_interval{0};
+  std::chrono::milliseconds poll_response_timeout{0};
+  std::chrono::milliseconds query_guard_window{0};
+  std::chrono::milliseconds command_watchdog_timeout{0};
+  ControlWatchdogAction command_watchdog_action{ControlWatchdogAction::Disabled};
+  float command_watchdog_brake_current{0.0f};
+};
+
 struct FwVersion {
   std::uint8_t major{0};
   std::uint8_t minor{0};

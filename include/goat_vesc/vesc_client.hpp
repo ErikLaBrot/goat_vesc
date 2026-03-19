@@ -112,6 +112,8 @@ public:
   void set_motor_poll_interval(std::chrono::milliseconds interval);
   /** Updates the periodic IMU poll interval. `0 ms` disables polling. */
   void set_imu_poll_interval(std::chrono::milliseconds interval);
+  /** Returns the current bridge-facing poll and watchdog configuration. */
+  VescClientConfigSnapshot config_snapshot() const;
 
   /** Returns the latest cached motor-state sample, if any. */
   std::optional<VescMotorState> latest_motor_state() const;

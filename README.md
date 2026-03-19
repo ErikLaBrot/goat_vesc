@@ -113,6 +113,8 @@ Main type: [`goat_vesc::VescClient`](include/goat_vesc/vesc_client.hpp)
 
 Configuration: [`goat_vesc::VescConfig`](include/goat_vesc/types.hpp)
 
+Bridge introspection snapshot: [`goat_vesc::VescClientConfigSnapshot`](include/goat_vesc/types.hpp)
+
 Watchdog configuration fields:
 
 - `std::chrono::milliseconds command_watchdog_timeout`
@@ -124,6 +126,7 @@ Primary methods:
 - `bool connect()`
 - `void disconnect()`
 - `bool is_connected() const`
+- `VescClientConfigSnapshot config_snapshot() const`
 - `std::optional<VescIMUData> latest_imu() const`
 - `std::optional<VescMotorState> latest_motor_state() const`
 - `SubscriptionHandle subscribe_imu(ImuCallback cb)`
@@ -148,6 +151,8 @@ This means:
 
 Decoded IMU and motor-state samples are stamped when the full response packet is received and decoded by the I/O thread.
 
+`config_snapshot()` exposes the current bridge-facing scheduling and watchdog configuration, including live poll intervals after any `set_*_poll_interval(...)` updates. This gives bridge/operator code a cheap way to report the active cadence and safety settings without reaching into transport internals.
+
 ## Typical Usage
 
 ```cpp
@@ -168,6 +173,11 @@ int main() {
     VescClient client(config);
     if (!client.connect()) {
         return 1;
+    }
+
+    const auto snapshot = client.config_snapshot();
+    if (snapshot.command_watchdog_timeout > 0ms) {
+        // publish configured safety behavior to diagnostics
     }
 
     auto imu_sub = client.subscribe_imu([](const VescIMUData& imu) {

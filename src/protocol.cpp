@@ -41,8 +41,9 @@ std::uint16_t VescProtocol::crc16ccitt(const Payload& data) noexcept {
   for (const auto byte : data) {
     crc = static_cast<std::uint16_t>(crc ^ (static_cast<std::uint32_t>(byte) << 8U));
     for (int i = 0; i < 8; ++i) {
-      crc = (crc & 0x8000U) ? static_cast<std::uint16_t>((crc << 1) ^ 0x1021U)
-                            : static_cast<std::uint16_t>(crc << 1);
+      const auto shifted = static_cast<std::uint32_t>(crc) << 1U;
+      crc = (crc & 0x8000U) != 0U ? static_cast<std::uint16_t>(shifted ^ 0x1021U)
+                                  : static_cast<std::uint16_t>(shifted);
     }
   }
   return crc;
