@@ -24,6 +24,8 @@
 /.audit/
 /scripts/
 /.jscpd.json
+/docs/html/
+/.editorconfig
 
 #misc local docs
 /TODO.txt

@@ -1,3 +1,8 @@
+/**
+ * @file vesc_client.hpp
+ * @brief Thread-safe high-level client for VESC serial communication.
+ */
+
 #pragma once
 
 #include <atomic>
@@ -22,7 +27,7 @@
 namespace goat_vesc {
 
 /**
- * Thread-safe VESC client with a single transport owner thread.
+ * @brief Thread-safe VESC client with a single transport-owner thread.
  *
  * Design goals:
  * - Hide packet framing/parsing behind a small typed API.
@@ -45,26 +50,41 @@ namespace goat_vesc {
  */
 class VescClient {
 public:
+  /** @brief Callback invoked when a fresh IMU sample is decoded. */
   using ImuCallback = std::function<void(const VescIMUData&)>;
+  /** @brief Callback invoked when a fresh motor-state sample is decoded. */
   using MotorStateCallback = std::function<void(const VescMotorState&)>;
 
   /**
-   * RAII token for a subscription created by subscribe_imu() or
+   * @brief RAII token for a subscription created by subscribe_imu() or
    * subscribe_motor_state(). Destroying or resetting the handle unregisters the
    * callback.
    */
   class SubscriptionHandle {
   public:
+    /** @brief Creates an empty handle that is not bound to a subscription. */
     SubscriptionHandle() = default;
     SubscriptionHandle(const SubscriptionHandle&) = delete;
     SubscriptionHandle& operator=(const SubscriptionHandle&) = delete;
 
+    /**
+     * @brief Transfers ownership of a subscription registration.
+     * @param other Handle to move from.
+     */
     SubscriptionHandle(SubscriptionHandle&& other) noexcept;
+    /**
+     * @brief Transfers ownership of a subscription registration.
+     * @param other Handle to move from.
+     * @return `*this`.
+     */
     SubscriptionHandle& operator=(SubscriptionHandle&& other) noexcept;
 
+    /** @brief Unregisters the subscription if the handle still owns one. */
     ~SubscriptionHandle();
 
+    /** @brief Unregisters the subscription and makes the handle empty. */
     void reset();
+    /** @brief Returns `true` when the handle still owns a live subscription. */
     explicit operator bool() const {
       return unsubscribe_ != nullptr;
     }
@@ -77,88 +97,141 @@ public:
   };
 
   /**
-   * Creates a client with the given transport, timing, and timestamp settings.
+   * @brief Creates a client with the given transport, timing, and timestamp settings.
    *
    * The client is inactive until connect() is called.
+   *
+   * @param config Runtime configuration copied into the client.
    */
   explicit VescClient(VescConfig config);
+  /** @brief Disconnects the transport if still connected. */
   ~VescClient();
 
   VescClient(const VescClient&) = delete;
   VescClient& operator=(const VescClient&) = delete;
 
-  /** Returns currently visible `/dev/ttyACM*` candidates. */
+  /**
+   * @brief Returns currently visible `/dev/ttyACM*` candidates.
+   * @return Candidate device paths discovered through globbing.
+   */
   static std::vector<std::string> find_devices();
 
   /**
-   * Opens the configured transport and starts the background I/O thread.
+   * @brief Opens the configured transport and starts the background I/O thread.
    *
    * If `config.device_path` is empty and no custom `open_serial_fn` is supplied,
    * the first `/dev/ttyACM*` device is used.
+   *
+   * @return `true` when the transport thread is running after the call.
    */
   bool connect();
 
   /**
-   * Stops the background thread and closes the transport.
+   * @brief Stops the background thread and closes the transport.
    *
    * Outstanding blocking queries are completed with `std::nullopt`.
    */
   void disconnect();
 
-  /** True while the client believes the transport thread is active. */
+  /**
+   * @brief True while the client believes the transport thread is active.
+   * @return `true` when the transport thread is currently running.
+   */
   bool is_connected() const;
 
-  /** Updates the periodic motor-state poll interval. `0 ms` disables polling. */
+  /**
+   * @brief Updates the periodic motor-state polling cadence.
+   * @param interval New cadence. `0 ms` disables motor polling.
+   */
   void set_motor_poll_interval(std::chrono::milliseconds interval);
-  /** Updates the periodic IMU poll interval. `0 ms` disables polling. */
+  /**
+   * @brief Updates the periodic IMU polling cadence.
+   * @param interval New cadence. `0 ms` disables IMU polling.
+   */
   void set_imu_poll_interval(std::chrono::milliseconds interval);
-  /** Returns the current bridge-facing poll and watchdog configuration. */
+  /**
+   * @brief Returns the current bridge-facing polling and watchdog configuration.
+   * @return Snapshot including runtime-updated poll intervals.
+   */
   VescClientConfigSnapshot config_snapshot() const;
 
-  /** Returns the latest cached motor-state sample, if any. */
+  /**
+   * @brief Returns the latest cached motor-state sample, if any.
+   * @return Most recent motor-state sample seen by the client.
+   */
   std::optional<VescMotorState> latest_motor_state() const;
-  /** Returns the latest cached IMU sample, if any. */
+  /**
+   * @brief Returns the latest cached IMU sample, if any.
+   * @return Most recent IMU sample seen by the client.
+   */
   std::optional<VescIMUData> latest_imu() const;
 
   /**
-   * Registers a callback invoked whenever a fresh IMU sample is decoded.
+   * @brief Registers a callback invoked whenever a fresh IMU sample is decoded.
    *
    * The callback runs outside internal locks. Keep it lightweight.
+   *
+   * @param callback Function to invoke when a new IMU sample arrives.
+   * @return RAII handle that unregisters the callback on destruction.
    */
   SubscriptionHandle subscribe_imu(ImuCallback callback);
   /**
-   * Registers a callback invoked whenever a fresh motor-state sample is decoded.
+   * @brief Registers a callback invoked whenever a fresh motor-state sample is decoded.
    *
    * The callback runs outside internal locks. Keep it lightweight.
+   *
+   * @param callback Function to invoke when a new motor-state sample arrives.
+   * @return RAII handle that unregisters the callback on destruction.
    */
   SubscriptionHandle subscribe_motor_state(MotorStateCallback callback);
 
   /**
-   * Enqueues a `COMM_SET_RPM` command for transmission.
+   * @brief Enqueues a `COMM_SET_RPM` command for transmission.
    *
    * Returns `true` only if the command remains queued or otherwise deliverable
    * when the call returns.
+   *
+   * @param rpm Target RPM command.
+   * @return `true` when the command remains deliverable after submission.
    */
   bool set_rpm(std::int32_t rpm);
-  /** Enqueues a `COMM_SET_DUTY` command for transmission. */
+  /**
+   * @brief Enqueues a `COMM_SET_DUTY` command for transmission.
+   * @param duty Duty-cycle request, typically in the `[-1.0, 1.0]` range.
+   * @return `true` when the command remains deliverable after submission.
+   */
   bool set_duty(float duty);
-  /** Enqueues a `COMM_SET_CURRENT` command for transmission. */
+  /**
+   * @brief Enqueues a `COMM_SET_CURRENT` command for transmission.
+   * @param amps Target current command in amps.
+   * @return `true` when the command remains deliverable after submission.
+   */
   bool set_current(float amps);
   /**
-   * Enqueues a bounded `COMM_SET_CURRENT_BRAKE` command for transmission.
+   * @brief Enqueues a bounded `COMM_SET_CURRENT_BRAKE` command for transmission.
    *
    * `amps` is a positive brake-current magnitude. Returns `false` if `amps` is
    * non-positive, active braking is disabled by configuration, or the command
    * cannot remain deliverable.
+   *
+   * @param amps Requested brake-current magnitude in amps.
+   * @return `true` when the command remains deliverable after submission.
    */
   bool set_current_brake(float amps);
-  /** Enqueues a `COMM_SET_SERVO_POS` command for transmission. */
+  /**
+   * @brief Enqueues a `COMM_SET_SERVO_POS` command for transmission.
+   * @param position Servo position in controller-specific normalized units.
+   * @return `true` when the command remains deliverable after submission.
+   */
   bool set_servo_pos(float position);
 
   /**
-   * Performs a blocking firmware-version query.
+   * @brief Performs a blocking firmware-version query.
    *
    * Returns `std::nullopt` on timeout or disconnect.
+   *
+   * @param timeout Maximum time to wait for a firmware reply.
+   * @return Parsed firmware version on success, otherwise `std::nullopt`.
    */
   std::optional<FwVersion> request_fw_version(std::chrono::milliseconds timeout);
 

@@ -1,3 +1,14 @@
+/*
+ * Minimal library example.
+ *
+ * Demonstrates:
+ * - constructing a VescClient
+ * - connecting to a device
+ * - subscribing to IMU and motor telemetry
+ * - issuing a simple command
+ * - reading cached motor state
+ */
+
 #include "goat_vesc/vesc_client.hpp"
 
 #include <chrono>

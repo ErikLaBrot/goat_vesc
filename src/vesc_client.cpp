@@ -513,6 +513,8 @@ void VescClient::io_loop() {
       std::lock_guard lock(scheduler_mutex_);
       commands.swap(command_queue_);
     }
+    // Drain queued control commands before issuing any new reply-bearing work so
+    // fire-and-forget actuation stays highest priority on the wire.
     const bool wrote_all_commands = std::all_of(
         commands.begin(), commands.end(),
         [&](const std::vector<std::uint8_t>& command) { return write_packet(command); });
@@ -574,6 +576,9 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
   bool drop_stale_query_reply = false;
   {
     std::lock_guard lock(scheduler_mutex_);
+    // Timed-out blocking queries may still produce a late reply on the wire.
+    // Count and drop those replies so they cannot satisfy a newer query with
+    // the same expected packet ID.
     auto stale_reply = stale_query_reply_counts_.find(payload[0]);
     if (stale_reply != stale_query_reply_counts_.end()) {
       if (stale_reply->second > 1) {
@@ -749,6 +754,8 @@ bool VescClient::write_packet(const std::vector<std::uint8_t>& pkt) {
       continue;
     }
     if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      // Writes stay on the I/O thread, but a full kernel buffer should still
+      // react promptly to disconnects or scheduler wakeups.
       if (!wait_until_writable()) {
         return false;
       }
@@ -790,7 +797,8 @@ bool VescClient::wait_until_writable() {
         return true;
       }
 
-      // A wake-only event means state changed elsewhere; loop to re-check it.
+      // A wake-only event means another thread changed scheduler or shutdown
+      // state while this thread was blocked waiting for write readiness.
       continue;
     }
     if (rc == 0) {

@@ -1,3 +1,14 @@
+/*
+ * Servo sweep example.
+ *
+ * Demonstrates:
+ * - issuing a sequence of `set_servo_pos(...)` commands
+ * - checking connectivity with a firmware query
+ * - sweeping around a configurable center position
+ *
+ * This touches real hardware and is intended as a manual example/smoke test.
+ */
+
 #include "goat_vesc/vesc_client.hpp"
 
 #include <algorithm>
