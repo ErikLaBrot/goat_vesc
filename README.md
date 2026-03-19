@@ -176,7 +176,7 @@ int main() {
     }
 
     const auto snapshot = client.config_snapshot();
-    if (snapshot.command_watchdog_timeout > 0ms) {
+    if (snapshot.command_watchdog_timeout > std::chrono::milliseconds{0}) {
         // publish configured safety behavior to diagnostics
     }
 
