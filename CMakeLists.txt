@@ -10,48 +10,22 @@ option(GOAT_VESC_ENABLE_CLANG_TIDY "Enable clang-tidy" OFF)
 option(GOAT_VESC_ENABLE_CPPCHECK "Enable cppcheck" OFF)
 option(GOAT_VESC_ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(GOAT_VESC_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+option(GOAT_VESC_ENABLE_WERROR "Treat compiler warnings as errors" OFF)
+option(GOAT_VESC_ENABLE_STRICT_MODE "Enable the repository quality gate defaults" OFF)
+option(GOAT_VESC_CLANG_TIDY_WARNINGS_AS_ERRORS "Treat clang-tidy findings as errors" OFF)
+option(GOAT_VESC_CPPCHECK_EXHAUSTIVE "Use cppcheck exhaustive mode" OFF)
 
-set(GOAT_VESC_SANITIZER_LIST "")
-if(GOAT_VESC_ENABLE_ASAN OR GOAT_VESC_ENABLE_UBSAN)
-  set(_goat_vesc_sanitizers "")
-  if(GOAT_VESC_ENABLE_ASAN)
-    list(APPEND _goat_vesc_sanitizers "address")
-  endif()
-  if(GOAT_VESC_ENABLE_UBSAN)
-    list(APPEND _goat_vesc_sanitizers "undefined")
-  endif()
-
-  string(REPLACE ";" "," GOAT_VESC_SANITIZER_LIST "${_goat_vesc_sanitizers}")
+if(GOAT_VESC_ENABLE_STRICT_MODE)
+  set(GOAT_VESC_ENABLE_CLANG_TIDY ON CACHE BOOL "Enable clang-tidy" FORCE)
+  set(GOAT_VESC_ENABLE_CPPCHECK ON CACHE BOOL "Enable cppcheck" FORCE)
+  set(GOAT_VESC_ENABLE_WERROR ON CACHE BOOL "Treat compiler warnings as errors" FORCE)
+  set(GOAT_VESC_CLANG_TIDY_WARNINGS_AS_ERRORS ON CACHE BOOL
+      "Treat clang-tidy findings as errors" FORCE)
+  set(GOAT_VESC_CPPCHECK_EXHAUSTIVE ON CACHE BOOL "Use cppcheck exhaustive mode" FORCE)
 endif()
 
-function(goat_vesc_enable_sanitizers target_name)
-  if(NOT GOAT_VESC_SANITIZER_LIST)
-    return()
-  endif()
-
-  target_compile_options(${target_name} PRIVATE
-    -fsanitize=${GOAT_VESC_SANITIZER_LIST}
-    -fno-omit-frame-pointer
-  )
-  target_link_options(${target_name} PRIVATE
-    -fsanitize=${GOAT_VESC_SANITIZER_LIST}
-    -fno-omit-frame-pointer
-  )
-endfunction()
-
-function(goat_vesc_enable_static_analysis target_name)
-  if(GOAT_VESC_ENABLE_CLANG_TIDY)
-    set_target_properties(${target_name} PROPERTIES
-      CXX_CLANG_TIDY "clang-tidy;--quiet"
-    )
-  endif()
-
-  if(GOAT_VESC_ENABLE_CPPCHECK)
-    set_target_properties(${target_name} PROPERTIES
-      CXX_CPPCHECK "cppcheck;--enable=warning,style,performance,portability;--std=c++17;--quiet;--suppress=assertWithSideEffect;--suppress=useStlAlgorithm"
-    )
-  endif()
-endfunction()
+include(cmake/StaticAnalysis.cmake)
+include(cmake/Sanitizers.cmake)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -74,9 +48,7 @@ target_include_directories(goat_vesc
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_compile_options(goat_vesc PRIVATE
-  -Wall -Wextra -Wpedantic -Wconversion -Wshadow
-)
+goat_vesc_enable_warnings(goat_vesc)
 goat_vesc_enable_sanitizers(goat_vesc)
 goat_vesc_enable_static_analysis(goat_vesc)
 

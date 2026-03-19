@@ -26,16 +26,16 @@
 namespace goat_vesc {
 
 struct VescClientTestAccess {
-  static auto scheduler_mutex(VescClient& client) -> std::mutex& {
-    return client.scheduler_mutex_;
+  static auto scheduler_mutex(VescClient* client) -> std::mutex& {
+    return client->scheduler_mutex_;
   }
 
-  static auto running(VescClient& client) -> std::atomic<bool>& {
-    return client.running_;
+  static auto running(VescClient* client) -> std::atomic<bool>& {
+    return client->running_;
   }
 
-  static auto command_queue(VescClient& client) -> std::deque<std::vector<std::uint8_t>>& {
-    return client.command_queue_;
+  static auto command_queue(VescClient* client) -> std::deque<std::vector<std::uint8_t>>& {
+    return client->command_queue_;
   }
 
   static auto stale_reply_count(VescClient& client, std::uint8_t id) -> std::size_t {
@@ -640,7 +640,8 @@ void test_subscription_cleanup_after_disconnect() {
   std::atomic<int> motor_callbacks{0};
 
   auto imu_handle = client.subscribe_imu([&](const VescIMUData&) { ++imu_callbacks; });
-  auto motor_handle = client.subscribe_motor_state([&](const VescMotorState&) { ++motor_callbacks; });
+  auto motor_handle =
+      client.subscribe_motor_state([&](const VescMotorState&) { ++motor_callbacks; });
 
   assert(VescClientTestAccess::imu_subscription_count(client) == 1);
   assert(VescClientTestAccess::motor_subscription_count(client) == 1);
@@ -976,7 +977,8 @@ void test_queued_query_deadline_expires_while_older_query_waits() {
   VescClient client(config);
   assert(client.connect());
 
-  auto first = std::async(std::launch::async, [&client] { return client.request_fw_version(200ms); });
+  auto first =
+      std::async(std::launch::async, [&client] { return client.request_fw_version(200ms); });
   wait_until([&] { return fake.fw_requests.load() == 1; }, 200ms, "first query was not sent");
 
   auto second =
@@ -984,12 +986,12 @@ void test_queued_query_deadline_expires_while_older_query_waits() {
   std::this_thread::sleep_for(5ms);
 
   const auto third_started = std::chrono::steady_clock::now();
-  auto third = std::async(std::launch::async, [&client] { return client.request_fw_version(25ms); });
+  auto third =
+      std::async(std::launch::async, [&client] { return client.request_fw_version(25ms); });
 
   const auto third_result = third.get();
-  const auto third_elapsed =
-      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-                                                            third_started);
+  const auto third_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - third_started);
   assert(!third_result.has_value());
   assert(third_elapsed < 45ms);
 
@@ -1022,9 +1024,8 @@ void test_late_fw_reply_does_not_satisfy_newer_query() {
 
   const auto blocked_started = std::chrono::steady_clock::now();
   const auto blocked = client.request_fw_version(40ms);
-  const auto blocked_elapsed =
-      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-                                                            blocked_started);
+  const auto blocked_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - blocked_started);
   assert(!blocked.has_value());
   assert(blocked_elapsed < 100ms);
   assert(fake.fw_requests.load() == 1);
@@ -1109,8 +1110,8 @@ void test_disconnect_unblocks_blocked_write_wait() {
 
 void test_command_rejected_after_disconnect_state_wins_queue_race() {
   VescClient client(VescConfig{});
-  auto& scheduler_mutex = VescClientTestAccess::scheduler_mutex(client);
-  auto& running = VescClientTestAccess::running(client);
+  auto& scheduler_mutex = VescClientTestAccess::scheduler_mutex(&client);
+  auto& running = VescClientTestAccess::running(&client);
 
   std::unique_lock scheduler_lock(scheduler_mutex);
   running.store(true);
@@ -1124,7 +1125,7 @@ void test_command_rejected_after_disconnect_state_wins_queue_race() {
   scheduler_lock.unlock();
 
   assert(!submit.get());
-  assert(VescClientTestAccess::command_queue(client).empty());
+  assert(VescClientTestAccess::command_queue(&client).empty());
 }
 
 void test_disconnect_cleans_up_after_async_transport_failure() {

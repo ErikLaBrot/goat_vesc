@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <numeric>
 #include <vector>
 
 namespace {
@@ -27,10 +28,9 @@ std::vector<std::uint8_t> bytes(std::initializer_list<std::uint8_t> values) {
 }
 
 std::vector<std::uint8_t> concat_bytes(std::initializer_list<std::vector<std::uint8_t>> chunks) {
-  std::size_t total_size = 0;
-  for (const auto& chunk : chunks) {
-    total_size += chunk.size();
-  }
+  const auto total_size = std::accumulate(
+      chunks.begin(), chunks.end(), std::size_t{0},
+      [](std::size_t size, const std::vector<std::uint8_t>& chunk) { return size + chunk.size(); });
 
   std::vector<std::uint8_t> combined;
   combined.reserve(total_size);
@@ -388,7 +388,8 @@ void test_packet_parser_rejects_invalid_medium_frame_lengths() {
 
   parser.reset();
 
-  payloads = parser.feed_bytes(make_long16_header(static_cast<std::uint16_t>(kMaxPayloadBytes + 1U)));
+  payloads =
+      parser.feed_bytes(make_long16_header(static_cast<std::uint16_t>(kMaxPayloadBytes + 1U)));
   assert(payloads.empty());
 
   payloads = parser.feed_bytes(valid_short_frame);

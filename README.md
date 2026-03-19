@@ -199,9 +199,9 @@ Static analysis gate:
 cmake -S . -B build/goat_vesc-analysis \
   -DGOAT_VESC_BUILD_TESTS=ON \
   -DGOAT_VESC_BUILD_TOOLS=ON \
-  -DGOAT_VESC_ENABLE_CLANG_TIDY=ON \
-  -DGOAT_VESC_ENABLE_CPPCHECK=ON
+  -DGOAT_VESC_ENABLE_STRICT_MODE=ON
 cmake --build build/goat_vesc-analysis
+ctest --test-dir build/goat_vesc-analysis --output-on-failure
 ```
 
 Sanitizer gate:
@@ -210,11 +210,25 @@ Sanitizer gate:
 cmake -S . -B build/goat_vesc-sanitized \
   -DGOAT_VESC_BUILD_TESTS=ON \
   -DGOAT_VESC_BUILD_TOOLS=ON \
+  -DGOAT_VESC_ENABLE_WERROR=ON \
   -DGOAT_VESC_ENABLE_ASAN=ON \
   -DGOAT_VESC_ENABLE_UBSAN=ON
 cmake --build build/goat_vesc-sanitized
 ctest --test-dir build/goat_vesc-sanitized --output-on-failure
 ```
+
+Repo quality gate:
+
+```bash
+./scripts/run_quality_gate.sh
+```
+
+`GOAT_VESC_ENABLE_STRICT_MODE` enables the repo's stricter local gate:
+
+- compiler warnings-as-errors
+- `clang-tidy` with warnings promoted to errors
+- `cppcheck` in exhaustive mode without suppressing `useStlAlgorithm`
+- format and whitespace checks through the quality-gate script
 
 ## Backlog Workflow
 

@@ -409,14 +409,13 @@ void VescClient::io_loop() {
       if (in_flight_request_) {
         tighten_wait(micros_until(in_flight_request_->deadline, now));
       }
-      std::optional<SteadyClock::time_point> next_query_deadline;
-      for (const auto& request : request_queue_) {
-        if (!next_query_deadline || request.deadline < *next_query_deadline) {
-          next_query_deadline = request.deadline;
-        }
-      }
-      if (next_query_deadline) {
-        tighten_wait(micros_until(*next_query_deadline, now));
+      const auto next_query =
+          std::min_element(request_queue_.begin(), request_queue_.end(),
+                           [](const ScheduledRequest& lhs, const ScheduledRequest& rhs) {
+                             return lhs.deadline < rhs.deadline;
+                           });
+      if (next_query != request_queue_.end()) {
+        tighten_wait(micros_until(next_query->deadline, now));
       }
     }
 
@@ -486,13 +485,11 @@ void VescClient::io_loop() {
       std::lock_guard lock(scheduler_mutex_);
       commands.swap(command_queue_);
     }
-    for (const auto& command : commands) {
-      if (!write_packet(command)) {
-        running_.store(false);
-        break;
-      }
-    }
-    if (!running_.load()) {
+    const bool wrote_all_commands = std::all_of(
+        commands.begin(), commands.end(),
+        [&](const std::vector<std::uint8_t>& command) { return write_packet(command); });
+    if (!wrote_all_commands) {
+      running_.store(false);
       break;
     }
 
@@ -778,8 +775,7 @@ VescClient::PollChannel* VescClient::select_due_poll_channel(const SteadyClock::
       continue;
     }
 
-    const auto due =
-        channel->next_due.time_since_epoch().count() == 0 ? now : channel->next_due;
+    const auto due = channel->next_due.time_since_epoch().count() == 0 ? now : channel->next_due;
     if (due > now) {
       continue;
     }
@@ -846,14 +842,12 @@ VescClient::dequeue_ready_query(const SteadyClock::time_point& now) {
     if (!request_queue_.empty()) {
       // connect() seeds next_due before the I/O loop runs, so treating a zero epoch as
       // "due now" here is only a fallback for partially initialized test setups.
-      const auto imu_next_due = imu_channel_.next_due.time_since_epoch().count() == 0 ? now
-                                                                                       : imu_channel_.next_due;
-      const auto motor_next_due = motor_channel_.next_due.time_since_epoch().count() == 0
-                                      ? now
-                                      : motor_channel_.next_due;
-      const auto time_until_imu = imu_channel_.interval_ms.load() > 0
-                                      ? imu_next_due - now
-                                      : SteadyClock::duration::max();
+      const auto imu_next_due =
+          imu_channel_.next_due.time_since_epoch().count() == 0 ? now : imu_channel_.next_due;
+      const auto motor_next_due =
+          motor_channel_.next_due.time_since_epoch().count() == 0 ? now : motor_channel_.next_due;
+      const auto time_until_imu =
+          imu_channel_.interval_ms.load() > 0 ? imu_next_due - now : SteadyClock::duration::max();
       const auto time_until_motor = motor_channel_.interval_ms.load() > 0
                                         ? motor_next_due - now
                                         : SteadyClock::duration::max();

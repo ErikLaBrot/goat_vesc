@@ -21,7 +21,7 @@
 # Logs and reports
 /.jscpd-report/
 /.audit/
-/scripts/LLM_plagiarism_test.sh
+/scripts/
 /.jscpd.json
 
 #misc local docs
