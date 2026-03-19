@@ -233,15 +233,79 @@ cmake -S . -B build/goat_vesc-sanitized \
   -DGOAT_VESC_BUILD_TOOLS=ON \
   -DGOAT_VESC_ENABLE_WERROR=ON \
   -DGOAT_VESC_ENABLE_ASAN=ON \
+  -DGOAT_VESC_ENABLE_LSAN=ON \
   -DGOAT_VESC_ENABLE_UBSAN=ON
 cmake --build build/goat_vesc-sanitized
 ctest --test-dir build/goat_vesc-sanitized --output-on-failure
+```
+
+Thread sanitizer gate:
+
+```bash
+cmake -S . -B build/goat_vesc-tsan \
+  -DGOAT_VESC_BUILD_TESTS=ON \
+  -DGOAT_VESC_BUILD_TOOLS=ON \
+  -DGOAT_VESC_ENABLE_WERROR=ON \
+  -DGOAT_VESC_ENABLE_TSAN=ON
+cmake --build build/goat_vesc-tsan
+ctest --test-dir build/goat_vesc-tsan --output-on-failure
+```
+
+Clang-only thread sanitizer gate:
+
+```bash
+cmake -S . -B build/goat_vesc-tsan-clang \
+  -DCMAKE_CXX_COMPILER=clang++-18 \
+  -DGOAT_VESC_BUILD_TESTS=ON \
+  -DGOAT_VESC_BUILD_TOOLS=ON \
+  -DGOAT_VESC_ENABLE_TSAN=ON
+cmake --build build/goat_vesc-tsan-clang
+ctest --test-dir build/goat_vesc-tsan-clang --output-on-failure
+```
+
+`ThreadSanitizer` should run as its own build. Do not combine it with
+`AddressSanitizer`, `LeakSanitizer`, or `UndefinedBehaviorSanitizer`.
+
+If the default compiler is GCC and TSAN aborts with `unexpected memory mapping`,
+prefer the Clang-only TSAN lane above. It changes compilers for that build only;
+the rest of the project can keep using GCC.
+
+Convenience presets:
+
+```bash
+cmake --preset strict-analysis
+cmake --build --preset strict-analysis
+ctest --preset strict-analysis
+
+cmake --preset asan-ubsan-lsan
+cmake --build --preset asan-ubsan-lsan
+ctest --preset asan-ubsan-lsan
+
+cmake --preset tsan
+cmake --build --preset tsan
+ctest --preset tsan
+
+cmake --preset tsan-clang
+cmake --build --preset tsan-clang
+ctest --preset tsan-clang
 ```
 
 Repo quality gate:
 
 ```bash
 ./scripts/run_quality_gate.sh
+```
+
+Optional TSAN lane:
+
+```bash
+./scripts/run_quality_gate.sh --with-tsan
+```
+
+Optional Clang-only TSAN lane:
+
+```bash
+./scripts/run_quality_gate.sh --with-tsan-clang
 ```
 
 `GOAT_VESC_ENABLE_STRICT_MODE` enables the repo's stricter local gate:

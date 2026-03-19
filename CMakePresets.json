@@ -1,0 +1,122 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 16,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "GOAT_VESC_BUILD_TESTS": "ON",
+        "GOAT_VESC_BUILD_TOOLS": "ON"
+      }
+    },
+    {
+      "name": "default",
+      "inherits": "base"
+    },
+    {
+      "name": "clang18-base",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++-18"
+      }
+    },
+    {
+      "name": "strict-analysis",
+      "inherits": "base",
+      "cacheVariables": {
+        "GOAT_VESC_ENABLE_STRICT_MODE": "ON"
+      }
+    },
+    {
+      "name": "asan-ubsan-lsan",
+      "inherits": "base",
+      "cacheVariables": {
+        "GOAT_VESC_ENABLE_WERROR": "ON",
+        "GOAT_VESC_ENABLE_ASAN": "ON",
+        "GOAT_VESC_ENABLE_LSAN": "ON",
+        "GOAT_VESC_ENABLE_UBSAN": "ON"
+      }
+    },
+    {
+      "name": "tsan",
+      "inherits": "base",
+      "cacheVariables": {
+        "GOAT_VESC_ENABLE_WERROR": "ON",
+        "GOAT_VESC_ENABLE_TSAN": "ON"
+      }
+    },
+    {
+      "name": "tsan-clang",
+      "inherits": "clang18-base",
+      "cacheVariables": {
+        "GOAT_VESC_ENABLE_TSAN": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default"
+    },
+    {
+      "name": "strict-analysis",
+      "configurePreset": "strict-analysis"
+    },
+    {
+      "name": "asan-ubsan-lsan",
+      "configurePreset": "asan-ubsan-lsan"
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan"
+    },
+    {
+      "name": "tsan-clang",
+      "configurePreset": "tsan-clang"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "strict-analysis",
+      "configurePreset": "strict-analysis",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "asan-ubsan-lsan",
+      "configurePreset": "asan-ubsan-lsan",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "tsan-clang",
+      "configurePreset": "tsan-clang",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
