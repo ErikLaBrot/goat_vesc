@@ -259,6 +259,18 @@ void VescClient::set_imu_poll_interval(std::chrono::milliseconds interval) {
   wake_io_thread();
 }
 
+VescClientConfigSnapshot VescClient::config_snapshot() const {
+  VescClientConfigSnapshot snapshot;
+  snapshot.motor_poll_interval = std::chrono::milliseconds(motor_channel_.interval_ms.load());
+  snapshot.imu_poll_interval = std::chrono::milliseconds(imu_channel_.interval_ms.load());
+  snapshot.poll_response_timeout = config_.poll_response_timeout;
+  snapshot.query_guard_window = config_.query_guard_window;
+  snapshot.command_watchdog_timeout = config_.command_watchdog_timeout;
+  snapshot.command_watchdog_action = config_.command_watchdog_action;
+  snapshot.command_watchdog_brake_current = config_.command_watchdog_brake_current;
+  return snapshot;
+}
+
 std::optional<VescMotorState> VescClient::latest_motor_state() const {
   std::lock_guard lock(cache_mutex_);
   return motor_state_cache_;

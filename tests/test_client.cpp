@@ -953,6 +953,40 @@ auto test_runtime_poll_interval_updates() -> void {
   client.disconnect();
 }
 
+auto test_config_snapshot_tracks_runtime_polling_behavior() -> void {
+  VescConfig config;
+  config.imu_poll_interval = 20ms;
+  config.motor_poll_interval = 35ms;
+  config.poll_response_timeout = 15ms;
+  config.query_guard_window = 7ms;
+  config.command_watchdog_timeout = 40ms;
+  config.command_watchdog_action = ControlWatchdogAction::BrakeCurrent;
+  config.command_watchdog_brake_current = 2.5f;
+
+  VescClient client(config);
+
+  const auto initial = client.config_snapshot();
+  assert(initial.imu_poll_interval == 20ms);
+  assert(initial.motor_poll_interval == 35ms);
+  assert(initial.poll_response_timeout == 15ms);
+  assert(initial.query_guard_window == 7ms);
+  assert(initial.command_watchdog_timeout == 40ms);
+  assert(initial.command_watchdog_action == ControlWatchdogAction::BrakeCurrent);
+  assert(initial.command_watchdog_brake_current == 2.5f);
+
+  client.set_imu_poll_interval(0ms);
+  client.set_motor_poll_interval(55ms);
+
+  const auto updated = client.config_snapshot();
+  assert(updated.imu_poll_interval == 0ms);
+  assert(updated.motor_poll_interval == 55ms);
+  assert(updated.poll_response_timeout == initial.poll_response_timeout);
+  assert(updated.query_guard_window == initial.query_guard_window);
+  assert(updated.command_watchdog_timeout == initial.command_watchdog_timeout);
+  assert(updated.command_watchdog_action == initial.command_watchdog_action);
+  assert(updated.command_watchdog_brake_current == initial.command_watchdog_brake_current);
+}
+
 auto test_concurrent_poll_updates_keep_client_responsive() -> void {
   constexpr auto kInitialStampNs = 5000ULL;
   constexpr auto kStampStepNs = 1000ULL;
@@ -1262,6 +1296,7 @@ int main() {
   test_watchdog_coast_safe_stop();
   test_connect_disconnect_edges();
   test_runtime_poll_interval_updates();
+  test_config_snapshot_tracks_runtime_polling_behavior();
   test_concurrent_poll_updates_keep_client_responsive();
   test_queued_query_deadline_expires_while_older_query_waits();
   test_late_fw_reply_does_not_satisfy_newer_query();
