@@ -144,7 +144,12 @@ public:
   bool set_duty(float duty);
   /** Enqueues a `COMM_SET_CURRENT` command for transmission. */
   bool set_current(float amps);
-  /** Enqueues a `COMM_SET_CURRENT_BRAKE` command for transmission. */
+  /**
+   * Enqueues a bounded `COMM_SET_CURRENT_BRAKE` command for transmission.
+   *
+   * Returns `false` if active braking is disabled by configuration or the
+   * command cannot remain deliverable.
+   */
   bool set_current_brake(float amps);
   /** Enqueues a `COMM_SET_SERVO_POS` command for transmission. */
   bool set_servo_pos(float position);

@@ -52,7 +52,7 @@ related blocking bug is closed or explicitly accepted.
 | `COMM_GET_VALUES` | 4 | request/response | `build_get_values_request(...)`, `parse_get_values(...)` | supported | `BRIDGE-TEL-002`, covered by test |
 | `COMM_SET_DUTY` | 5 | command | `set_duty(...)`, `build_set_duty_command(...)` | supported | `BRIDGE-CTRL-001`, covered by test |
 | `COMM_SET_CURRENT` | 6 | command | `set_current(...)`, `build_set_current_command(...)` | supported | `BRIDGE-CTRL-005`, covered by test |
-| `COMM_SET_CURRENT_BRAKE` | 7 | command | `set_current_brake(...)`, `build_set_current_brake_command(...)` | implemented; semantics open | `BRIDGE-CTRL-004`, open decision |
+| `COMM_SET_CURRENT_BRAKE` | 7 | command | `set_current_brake(...)`, `build_set_current_brake_command(...)` | supported as bounded active braking | `BRIDGE-CTRL-004`, test + doc |
 | `COMM_SET_RPM` | 8 | command | `set_rpm(...)`, `build_set_rpm_command(...)` | supported | `BRIDGE-CTRL-002`, covered by test |
 | `COMM_SET_POS` | 9 | command | enum only | deferred / unsupported | not in bridge-v1 scope |
 | `COMM_SET_HANDBRAKE` | 10 | command | enum only | deferred / unsupported | not in bridge-v1 scope |
@@ -67,7 +67,7 @@ related blocking bug is closed or explicitly accepted.
 | BRIDGE-CTRL-001 | The library shall support duty-cycle command output for the main motor. | Bridge control needs direct open-loop throttle behavior. | must have | covered | test | Add test coverage for duty, brake current, and servo commands |
 | BRIDGE-CTRL-002 | The library shall support RPM command output for the main motor. | Bridge control needs closed-loop speed control. | must have | covered | test | Add parser/framing edge-case test coverage; Add lifecycle/concurrency coverage for connect/disconnect and polling updates |
 | BRIDGE-CTRL-003 | The library shall support servo position output for steering or auxiliary actuation. | Bridge v1 requires servo control from the same transport owner. | must have | covered | test | Add test coverage for duty, brake current, and servo commands |
-| BRIDGE-CTRL-004 | The library shall support braking for bridge control. Exact service-brake versus hold-brake semantics are intentionally deferred. | Braking is required for vehicle control, but semantics need a separate design discussion. | must have | covered | test + doc | Bridge-safe stale-command watchdog applies configured brake current as a one-shot safe-stop |
+| BRIDGE-CTRL-004 | The library shall support braking for bridge control through `COMM_SET_CURRENT_BRAKE`, with client-side clamping to a configured hardware-safe brake-current limit. Coasting remains a separate zero-command behavior. | Bridge control needs an explicit active-brake path without allowing callers to exceed the vehicle's configured brake-current bound. | must have | covered | test + doc | Bridge-safe stale-command watchdog applies configured brake current as a one-shot safe-stop |
 | BRIDGE-CTRL-005 | The library shall support current command output for the main motor. | Bridge control needs current-mode actuation for closed-loop torque behavior. | must have | covered | test | Add test coverage for duty, brake current, and servo commands |
 
 ## Telemetry

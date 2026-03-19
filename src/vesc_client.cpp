@@ -1,6 +1,7 @@
 #include "goat_vesc/vesc_client.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cerrno>
 #include <cstring>
 
@@ -73,6 +74,13 @@ bool set_nonblocking(int fd) {
     return false;
   }
   return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
+float clamp_brake_current(float requested_amps, float max_brake_current) {
+  if (max_brake_current <= 0.0f) {
+    return 0.0f;
+  }
+  return std::min(std::fabs(requested_amps), max_brake_current);
 }
 
 std::optional<std::chrono::microseconds> micros_until(const SteadyClock::time_point& deadline,
@@ -267,6 +275,7 @@ VescClientConfigSnapshot VescClient::config_snapshot() const {
   snapshot.query_guard_window = config_.query_guard_window;
   snapshot.command_watchdog_timeout = config_.command_watchdog_timeout;
   snapshot.command_watchdog_action = config_.command_watchdog_action;
+  snapshot.max_brake_current = config_.max_brake_current;
   snapshot.command_watchdog_brake_current = config_.command_watchdog_brake_current;
   return snapshot;
 }
@@ -331,10 +340,15 @@ bool VescClient::set_current(float amps) {
 }
 
 bool VescClient::set_current_brake(float amps) {
+  const float clamped_amps = clamp_brake_current(amps, config_.max_brake_current);
+  if (clamped_amps <= 0.0f) {
+    return false;
+  }
+
   std::vector<std::uint8_t> packet;
   {
     std::lock_guard lock(protocol_mutex_);
-    packet = cmd_protocol_.build_set_current_brake_command(amps);
+    packet = cmd_protocol_.build_set_current_brake_command(clamped_amps);
   }
   return enqueue_control_command(std::move(packet));
 }
@@ -682,7 +696,8 @@ bool VescClient::control_watchdog_enabled() const {
   case ControlWatchdogAction::Coast:
     return true;
   case ControlWatchdogAction::BrakeCurrent:
-    return config_.command_watchdog_brake_current > 0.0f;
+    return clamp_brake_current(config_.command_watchdog_brake_current, config_.max_brake_current) >
+           0.0f;
   }
 
   return false;
@@ -707,7 +722,8 @@ VescClient::dequeue_due_watchdog_command(const SteadyClock::time_point& now) {
     return cmd_protocol_.build_set_current_command(0.0f);
   }
   if (config_.command_watchdog_action == ControlWatchdogAction::BrakeCurrent) {
-    return cmd_protocol_.build_set_current_brake_command(config_.command_watchdog_brake_current);
+    return cmd_protocol_.build_set_current_brake_command(
+        clamp_brake_current(config_.command_watchdog_brake_current, config_.max_brake_current));
   }
   return std::nullopt;
 }
