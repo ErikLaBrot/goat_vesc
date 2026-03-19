@@ -70,36 +70,54 @@ If the client detects a transport failure:
 
 What the library does **not** currently do:
 
-- it does not have a built-in control watchdog
-- it does not repeatedly send a zero-current or zero-duty command if upstream control traffic stops
+- it does not repeatedly refresh a safe-stop command after the watchdog fires
 - it cannot send a final stop command after the serial link is already gone
 
 ### Is there timeout safety for remote control dropout?
 
-Not yet in the library itself.
+Yes, if you enable the watchdog in `VescConfig`.
 
-Right now, if your remote operator stops sending commands but the serial link and process are still alive, the last command can remain active until something else changes it. Whether the motor actually keeps running depends on the VESC firmware/app configuration.
+The client now supports an opt-in stale-command watchdog for bridge-style control loops:
+
+- set `command_watchdog_timeout` to a positive duration
+- choose `command_watchdog_action`
+- if using `BrakeCurrent`, set `command_watchdog_brake_current` to a positive amp value
+
+When enabled, each fresh control command re-arms the watchdog. If no further control command arrives before the timeout, the library sends one safe-stop command:
+
+- `ControlWatchdogAction::Coast` sends `COMM_SET_CURRENT` with `0.0 A`
+- `ControlWatchdogAction::BrakeCurrent` sends `COMM_SET_CURRENT_BRAKE` with the configured brake current
+
+The watchdog is intentionally one-shot. After it fires, a new control command must arrive to arm it again.
+
+If you leave the watchdog disabled, the previous behavior still applies: if your remote operator stops sending commands but the serial link and process are still alive, the last command can remain active until something else changes it. Whether the motor actually keeps running depends on the VESC firmware/app configuration.
 
 For a remote-control use case, you should treat this as a required safety feature and not as optional polish.
 
 Recommended safety layers:
 
 1. Configure the VESC-side timeout/watchdog so stale control commands decay to zero or brake.
-2. Add an application-level command heartbeat in your server/ROS node.
-3. If the heartbeat expires, explicitly command a safe output such as zero current or brake current.
-4. Consider making the library expose a dedicated watchdog-fed control mode in a follow-up change.
+2. Enable the library watchdog when you want the host transport owner to enforce a one-shot safe-stop on stale input.
+3. Add an application-level command heartbeat in your server/ROS node.
+4. If the heartbeat expires, explicitly command a safe output such as zero current or brake current.
 
 The important constraint is this:
 
 - once the link is already lost, the library cannot rely on sending one last stop command
 
-so the final authority for stale-command safety should live on the VESC side or in a watchdog mechanism that is continuously refreshed while control is healthy.
+so the final authority for stale-command safety should still live on the VESC side or in a watchdog mechanism that is continuously refreshed while control is healthy.
 
 ## API Overview
 
 Main type: [`goat_vesc::VescClient`](include/goat_vesc/vesc_client.hpp)
 
 Configuration: [`goat_vesc::VescConfig`](include/goat_vesc/types.hpp)
+
+Watchdog configuration fields:
+
+- `std::chrono::milliseconds command_watchdog_timeout`
+- `ControlWatchdogAction command_watchdog_action`
+- `float command_watchdog_brake_current`
 
 Primary methods:
 
@@ -143,6 +161,9 @@ int main() {
     config.device_path = "/dev/ttyACM0";
     config.imu_poll_interval = 10ms;
     config.motor_poll_interval = 50ms;
+    config.command_watchdog_timeout = 100ms;
+    config.command_watchdog_action = ControlWatchdogAction::BrakeCurrent;
+    config.command_watchdog_brake_current = 3.0f;
 
     VescClient client(config);
     if (!client.connect()) {
@@ -181,7 +202,7 @@ For a ROS node:
 - use subscriptions to publish fresh IMU and motor-state messages
 - use `latest_*()` for services, diagnostics, or lazy reads
 - keep one clear control authority that issues motor commands
-- implement watchdog behavior for stale remote control input
+- enable the client watchdog or an application/VESC-side watchdog for stale remote control input
 
 This keeps protocol timing in one place and avoids ROS-side request traffic from perturbing IMU timing.
 

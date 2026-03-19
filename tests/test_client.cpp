@@ -435,6 +435,7 @@ struct FakeVesc {
   std::atomic<int> duty_commands{0};
   std::atomic<int> brake_current_commands{0};
   std::atomic<int> servo_commands{0};
+  std::atomic<std::int32_t> last_current_raw{0};
   std::atomic<std::int32_t> last_duty_raw{0};
   std::atomic<std::int32_t> last_brake_current_raw{0};
   std::atomic<std::int16_t> last_servo_raw{0};
@@ -480,9 +481,12 @@ private:
               } else {
                 schedule_response(delay, make_fw_response());
               }
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetRpm)) {
+            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetRpm) &&
+                       payload->size() == 5) {
               ++rpm_commands;
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetCurrent)) {
+            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetCurrent) &&
+                       payload->size() == 5) {
+              last_current_raw.store(read_i32(*payload, 1));
               ++current_commands;
             } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetDuty) &&
                        payload->size() == 5) {
@@ -759,6 +763,72 @@ void test_control_command_delivery() {
   assert(fake.last_duty_raw.load() == 20000);
   assert(fake.last_brake_current_raw.load() == -1500);
   assert(fake.last_servo_raw.load() == 500);
+
+  client.disconnect();
+}
+
+void test_watchdog_brake_current_safe_stop() {
+  FakeVesc fake;
+  VescConfig config;
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+  config.poll_response_timeout = 15ms;
+  config.query_guard_window = 5ms;
+  config.command_watchdog_timeout = 40ms;
+  config.command_watchdog_action = ControlWatchdogAction::BrakeCurrent;
+  config.command_watchdog_brake_current = 2.5f;
+  config.open_serial_fn = [&fake](const VescConfig&, int& fd_out) {
+    return fake.open_client_fd(fd_out);
+  };
+
+  VescClient client(config);
+  assert(client.connect());
+
+  assert(client.set_rpm(1800));
+  wait_until([&] { return fake.rpm_commands.load() == 1; }, 500ms,
+             "rpm command was not delivered before watchdog arming");
+
+  std::this_thread::sleep_for(20ms);
+  assert(fake.brake_current_commands.load() == 0);
+
+  wait_until([&] { return fake.brake_current_commands.load() == 1; }, 500ms,
+             "watchdog brake command did not fire");
+  assert(fake.last_brake_current_raw.load() == 2500);
+
+  std::this_thread::sleep_for(80ms);
+  assert(fake.brake_current_commands.load() == 1);
+
+  assert(client.set_duty(0.1f));
+  wait_until([&] { return fake.duty_commands.load() == 1; }, 500ms,
+             "duty command did not re-arm the watchdog");
+  wait_until([&] { return fake.brake_current_commands.load() == 2; }, 500ms,
+             "watchdog did not re-arm after fresh control input");
+
+  client.disconnect();
+}
+
+void test_watchdog_coast_safe_stop() {
+  FakeVesc fake;
+  VescConfig config;
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+  config.poll_response_timeout = 15ms;
+  config.query_guard_window = 5ms;
+  config.command_watchdog_timeout = 30ms;
+  config.command_watchdog_action = ControlWatchdogAction::Coast;
+  config.open_serial_fn = [&fake](const VescConfig&, int& fd_out) {
+    return fake.open_client_fd(fd_out);
+  };
+
+  VescClient client(config);
+  assert(client.connect());
+
+  assert(client.set_duty(0.35f));
+  wait_until([&] { return fake.duty_commands.load() == 1; }, 500ms,
+             "duty command was not delivered before watchdog arming");
+  wait_until([&] { return fake.current_commands.load() == 1; }, 500ms,
+             "coast watchdog did not send zero-current command");
+  assert(fake.last_current_raw.load() == 0);
 
   client.disconnect();
 }
@@ -1188,6 +1258,8 @@ int main() {
   test_poll_timeout_recovers();
   test_imu_timeout_does_not_starve_motor_polling();
   test_control_command_delivery();
+  test_watchdog_brake_current_safe_stop();
+  test_watchdog_coast_safe_stop();
   test_connect_disconnect_edges();
   test_runtime_poll_interval_updates();
   test_concurrent_poll_updates_keep_client_responsive();

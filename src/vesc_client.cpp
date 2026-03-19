@@ -297,7 +297,7 @@ bool VescClient::set_rpm(std::int32_t rpm) {
     std::lock_guard lock(protocol_mutex_);
     packet = cmd_protocol_.build_set_rpm_command(rpm);
   }
-  return enqueue_command(std::move(packet));
+  return enqueue_control_command(std::move(packet));
 }
 
 bool VescClient::set_duty(float duty) {
@@ -306,7 +306,7 @@ bool VescClient::set_duty(float duty) {
     std::lock_guard lock(protocol_mutex_);
     packet = cmd_protocol_.build_set_duty_command(duty);
   }
-  return enqueue_command(std::move(packet));
+  return enqueue_control_command(std::move(packet));
 }
 
 bool VescClient::set_current(float amps) {
@@ -315,7 +315,7 @@ bool VescClient::set_current(float amps) {
     std::lock_guard lock(protocol_mutex_);
     packet = cmd_protocol_.build_set_current_command(amps);
   }
-  return enqueue_command(std::move(packet));
+  return enqueue_control_command(std::move(packet));
 }
 
 bool VescClient::set_current_brake(float amps) {
@@ -324,7 +324,7 @@ bool VescClient::set_current_brake(float amps) {
     std::lock_guard lock(protocol_mutex_);
     packet = cmd_protocol_.build_set_current_brake_command(amps);
   }
-  return enqueue_command(std::move(packet));
+  return enqueue_control_command(std::move(packet));
 }
 
 bool VescClient::set_servo_pos(float position) {
@@ -333,7 +333,7 @@ bool VescClient::set_servo_pos(float position) {
     std::lock_guard lock(protocol_mutex_);
     packet = cmd_protocol_.build_set_servo_pos_command(position);
   }
-  return enqueue_command(std::move(packet));
+  return enqueue_control_command(std::move(packet));
 }
 
 std::optional<FwVersion> VescClient::request_fw_version(std::chrono::milliseconds timeout) {
@@ -408,6 +408,9 @@ void VescClient::io_loop() {
       std::lock_guard lock(scheduler_mutex_);
       if (in_flight_request_) {
         tighten_wait(micros_until(in_flight_request_->deadline, now));
+      }
+      if (control_watchdog_.armed) {
+        tighten_wait(micros_until(control_watchdog_.deadline, now));
       }
       const auto next_query =
           std::min_element(request_queue_.begin(), request_queue_.end(),
@@ -494,6 +497,13 @@ void VescClient::io_loop() {
     }
 
     handle_request_timeout();
+
+    if (auto watchdog_command = dequeue_due_watchdog_command(SteadyClock::now())) {
+      if (!write_packet(*watchdog_command)) {
+        running_.store(false);
+        break;
+      }
+    }
 
     bool has_in_flight = false;
     {
@@ -633,16 +643,61 @@ void VescClient::schedule_query(ScheduledRequest request) {
   wake_io_thread();
 }
 
-bool VescClient::enqueue_command(std::vector<std::uint8_t> packet) {
+bool VescClient::enqueue_control_command(std::vector<std::uint8_t> packet) {
   {
     std::lock_guard lock(scheduler_mutex_);
     if (!running_.load()) {
       return false;
     }
+    if (control_watchdog_enabled()) {
+      control_watchdog_.deadline = SteadyClock::now() + config_.command_watchdog_timeout;
+      control_watchdog_.armed = true;
+    }
     command_queue_.push_back(std::move(packet));
   }
   wake_io_thread();
   return true;
+}
+
+bool VescClient::control_watchdog_enabled() const {
+  if (config_.command_watchdog_timeout <= std::chrono::milliseconds::zero()) {
+    return false;
+  }
+
+  switch (config_.command_watchdog_action) {
+  case ControlWatchdogAction::Disabled:
+    return false;
+  case ControlWatchdogAction::Coast:
+    return true;
+  case ControlWatchdogAction::BrakeCurrent:
+    return config_.command_watchdog_brake_current > 0.0f;
+  }
+
+  return false;
+}
+
+std::optional<std::vector<std::uint8_t>>
+VescClient::dequeue_due_watchdog_command(const SteadyClock::time_point& now) {
+  if (!running_.load() || !control_watchdog_enabled()) {
+    return std::nullopt;
+  }
+
+  {
+    std::lock_guard lock(scheduler_mutex_);
+    if (!control_watchdog_.armed || control_watchdog_.deadline > now) {
+      return std::nullopt;
+    }
+    control_watchdog_ = ControlWatchdogState{};
+  }
+
+  std::lock_guard lock(protocol_mutex_);
+  if (config_.command_watchdog_action == ControlWatchdogAction::Coast) {
+    return cmd_protocol_.build_set_current_command(0.0f);
+  }
+  if (config_.command_watchdog_action == ControlWatchdogAction::BrakeCurrent) {
+    return cmd_protocol_.build_set_current_brake_command(config_.command_watchdog_brake_current);
+  }
+  return std::nullopt;
 }
 
 void VescClient::wake_io_thread() const {
@@ -753,6 +808,7 @@ void VescClient::clear_pending_work() {
     in_flight = std::move(in_flight_request_);
     in_flight_request_.reset();
     stale_query_reply_counts_.clear();
+    control_watchdog_ = ControlWatchdogState{};
   }
 
   for (auto& request : queued_requests) {
