@@ -365,11 +365,15 @@ void test_packet_parser_reset_clears_partial_frame_state() {
 void test_packet_parser_rejects_invalid_medium_frame_lengths() {
   VescPacketParser parser;
   const auto expected_payload = bytes({0xE0});
+  // Keep the recovery probe on the short-frame path so any decoded payload must
+  // come from a clean resync after the invalid medium-length header.
+  const auto valid_short_frame = frame_payload(expected_payload);
+  assert(valid_short_frame.front() == 0x02);
 
   auto payloads = parser.feed_bytes(make_long16_header(255));
   assert(payloads.empty());
 
-  payloads = parser.feed_bytes(frame_payload(expected_payload));
+  payloads = parser.feed_bytes(valid_short_frame);
   assert(payloads.size() == 1);
   assert(payloads.front() == expected_payload);
 
@@ -378,7 +382,7 @@ void test_packet_parser_rejects_invalid_medium_frame_lengths() {
   payloads = parser.feed_bytes(make_long16_header(254));
   assert(payloads.empty());
 
-  payloads = parser.feed_bytes(frame_payload(expected_payload));
+  payloads = parser.feed_bytes(valid_short_frame);
   assert(payloads.size() == 1);
   assert(payloads.front() == expected_payload);
 
@@ -387,31 +391,30 @@ void test_packet_parser_rejects_invalid_medium_frame_lengths() {
   payloads = parser.feed_bytes(make_long16_header(static_cast<std::uint16_t>(kMaxPayloadBytes + 1U)));
   assert(payloads.empty());
 
-  payloads = parser.feed_bytes(frame_payload(expected_payload));
+  payloads = parser.feed_bytes(valid_short_frame);
   assert(payloads.size() == 1);
   assert(payloads.front() == expected_payload);
 }
 
-void test_packet_parser_rejects_unsupported_24bit_framing() {
+void test_packet_parser_resyncs_after_unsupported_24bit_sequences() {
   VescPacketParser parser;
   const auto expected_payload = bytes({0xF0});
-
-  auto payloads = parser.feed_bytes(make_long24_header(1));
-  assert(payloads.empty());
-
-  payloads = parser.feed_bytes(frame_payload(expected_payload));
-  assert(payloads.size() == 1);
-  assert(payloads.front() == expected_payload);
-}
-
-void test_packet_parser_resyncs_after_unsupported_24bit_start_byte() {
-  VescPacketParser parser;
-  const auto expected_payload = bytes({0xF1});
+  const auto valid_short_frame = frame_payload(expected_payload);
+  assert(valid_short_frame.front() == 0x02);
 
   auto payloads = parser.feed_bytes(bytes({0x04}));
   assert(payloads.empty());
 
-  payloads = parser.feed_bytes(frame_payload(expected_payload));
+  payloads = parser.feed_bytes(valid_short_frame);
+  assert(payloads.size() == 1);
+  assert(payloads.front() == expected_payload);
+
+  parser.reset();
+
+  payloads = parser.feed_bytes(make_long24_header(1));
+  assert(payloads.empty());
+
+  payloads = parser.feed_bytes(valid_short_frame);
   assert(payloads.size() == 1);
   assert(payloads.front() == expected_payload);
 }
@@ -454,8 +457,7 @@ int main() {
   test_packet_parser_resyncs_after_bad_stop_byte();
   test_packet_parser_reset_clears_partial_frame_state();
   test_packet_parser_rejects_invalid_medium_frame_lengths();
-  test_packet_parser_rejects_unsupported_24bit_framing();
-  test_packet_parser_resyncs_after_unsupported_24bit_start_byte();
+  test_packet_parser_resyncs_after_unsupported_24bit_sequences();
   test_packet_parser_rejects_invalid_frames();
   return 0;
 }
