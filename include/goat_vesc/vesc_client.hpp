@@ -36,10 +36,12 @@ namespace goat_vesc {
  * - Only one reply-bearing request is allowed in flight at a time.
  *
  * Safety note:
- * - This class detects transport loss and stops queueing/sending commands, but it
- *   does not implement a motor-control watchdog that actively commands zero output
- *   when upstream control traffic stops. Use VESC-side timeout settings or add an
- *   application heartbeat/watchdog if loss-of-command must force a stop.
+ * - This class detects transport loss and stops queueing/sending commands.
+ * - `VescConfig::command_watchdog_*` can also enable an opt-in stale-command
+ *   watchdog that sends one safe-stop command when control input stops
+ *   refreshing.
+ * - The watchdog is disabled by default, so callers that need dropout safety
+ *   should still configure VESC-side timeouts as a backstop.
  */
 class VescClient {
 public:
@@ -190,6 +192,11 @@ private:
     std::unordered_map<std::size_t, MotorStateCallback> motor_callbacks;
   };
 
+  struct ControlWatchdogState {
+    SteadyClock::time_point deadline{};
+    bool armed{false};
+  };
+
   VescConfig config_;
   int fd_{-1};
   int wake_pipe_[2]{-1, -1};
@@ -207,6 +214,7 @@ private:
   std::deque<ScheduledRequest> request_queue_;
   std::optional<ScheduledRequest> in_flight_request_;
   std::unordered_map<std::uint8_t, std::size_t> stale_query_reply_counts_;
+  ControlWatchdogState control_watchdog_;
 
   mutable std::mutex cache_mutex_;
   std::optional<VescMotorState> motor_state_cache_;
@@ -225,7 +233,10 @@ private:
   void handle_request_timeout();
   void schedule_query(ScheduledRequest request);
 
-  bool enqueue_command(std::vector<std::uint8_t> packet);
+  bool enqueue_control_command(std::vector<std::uint8_t> packet);
+  bool control_watchdog_enabled() const;
+  std::optional<std::vector<std::uint8_t>>
+  dequeue_due_watchdog_command(const SteadyClock::time_point& now);
   void wake_io_thread() const;
   bool write_packet(const std::vector<std::uint8_t>& pkt);
   bool wait_until_writable();

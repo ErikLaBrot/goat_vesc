@@ -7,6 +7,12 @@
 
 namespace goat_vesc {
 
+enum class ControlWatchdogAction {
+  Disabled,
+  Coast,
+  BrakeCurrent,
+};
+
 struct VescConfig {
   // Serial device path. Ignored if open_serial_fn is supplied.
   std::string device_path{};
@@ -19,6 +25,12 @@ struct VescConfig {
   std::chrono::milliseconds poll_response_timeout{20};
   // Do not start a one-shot query if a periodic poll is due sooner than this.
   std::chrono::milliseconds query_guard_window{5};
+  // Optional stale-command watchdog. A timeout of 0 ms leaves watchdog behavior disabled.
+  std::chrono::milliseconds command_watchdog_timeout{0};
+  // Safe-stop action to send once when command input goes stale.
+  ControlWatchdogAction command_watchdog_action{ControlWatchdogAction::Disabled};
+  // Brake current used by BrakeCurrent watchdog mode. Positive amps are recommended.
+  float command_watchdog_brake_current{0.0f};
   // Optional wall-clock source used to stamp decoded samples in nanoseconds.
   std::function<std::uint64_t()> wall_time_ns;
   // Optional transport injector for tests or custom serial backends.
