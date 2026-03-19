@@ -1,3 +1,13 @@
+/*
+ * Probe example for bring-up and smoke testing.
+ *
+ * Demonstrates:
+ * - connecting to a VESC
+ * - querying firmware version
+ * - waiting for IMU and motor-state samples
+ * - printing decoded telemetry fields
+ */
+
 #include "goat_vesc/vesc_client.hpp"
 
 #include <chrono>

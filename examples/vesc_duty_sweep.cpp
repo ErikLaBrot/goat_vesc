@@ -1,3 +1,14 @@
+/*
+ * Duty sweep example.
+ *
+ * Demonstrates:
+ * - issuing a sequence of `set_duty(...)` commands
+ * - checking connectivity with a firmware query
+ * - reading motor-state telemetry before and after the sweep
+ *
+ * This touches real hardware and is intended as a manual example/smoke test.
+ */
+
 #include "goat_vesc/vesc_client.hpp"
 
 #include <chrono>

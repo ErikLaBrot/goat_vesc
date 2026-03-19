@@ -1,15 +1,16 @@
 # Bridge Readiness Checklist
 
-This document defines what "bridge-ready" means for `goat_vesc` for bridge v1.
-It is intentionally lightweight: the goal is a practical release gate, not a
-formal specification.
+This document defines what "bridge-ready" means for `goat_vesc` on the GOAT
+autonomous racer platform for bridge v1. It is intentionally lightweight: the
+goal is a practical release gate, not a formal specification.
 
 Use this checklist for requirement coverage. Test coverage should be judged by
-how well it proves these bridge-v1 requirements, not just by line coverage.
+how well it proves these GOAT bridge-v1 requirements, not just by line
+coverage.
 
 GitHub milestone and issue state are authoritative for active work tracking and
-approval. This document is the local requirement-coverage mirror for bridge-v1
-behavior.
+approval. This document is the local requirement-coverage mirror for GOAT
+bridge-v1 behavior.
 
 ## How To Read This
 
@@ -97,7 +98,7 @@ related blocking bug is closed or explicitly accepted.
 | BRIDGE-REL-004 | Poll timeouts shall recover without permanently stalling IMU or motor telemetry. | Temporary missed replies should not kill telemetry flow. | must have | partial | test | Harden IMU/motor poll timeout and recovery semantics |
 | BRIDGE-REL-005 | Blocking query deadlines shall be honored, and stale late replies shall not satisfy a newer request. | Bridge diagnostics must not return misleading results after timing faults. | must have | missing | not yet covered | Enforce per-query deadlines and reject stale late replies |
 | BRIDGE-REL-006 | Command submission results shall truthfully reflect whether a command can still be delivered during disconnect races. | Bridge control logic needs accurate command-send outcomes. | must have | missing | not yet covered | Prevent commands from reporting success when dropped during disconnect |
-| BRIDGE-REL-007 | Sanitizer-enabled builds should run across the library, tools, and tests. | Sanitizers are a practical reliability gate for transport and lifetime bugs. | should have later | covered | build + test | none |
+| BRIDGE-REL-007 | Sanitizer-enabled builds should run across the library, examples, and tests. | Sanitizers are a practical reliability gate for transport and lifetime bugs. | should have later | covered | build + test | none |
 
 ## Coverage Policy
 
