@@ -147,8 +147,9 @@ public:
   /**
    * Enqueues a bounded `COMM_SET_CURRENT_BRAKE` command for transmission.
    *
-   * Returns `false` if active braking is disabled by configuration or the
-   * command cannot remain deliverable.
+   * `amps` is a positive brake-current magnitude. Returns `false` if `amps` is
+   * non-positive, active braking is disabled by configuration, or the command
+   * cannot remain deliverable.
    */
   bool set_current_brake(float amps);
   /** Enqueues a `COMM_SET_SERVO_POS` command for transmission. */

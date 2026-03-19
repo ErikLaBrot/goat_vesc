@@ -113,8 +113,9 @@ so the final authority for stale-command safety should still live on the VESC si
 For bridge control, `COMM_SET_CURRENT_BRAKE` is the active-brake interface.
 
 - `set_current_brake(...)` requests a brake-current magnitude in amps
+- `set_current_brake(...)` accepts only a positive magnitude
 - the client clamps that request to `VescConfig::max_brake_current`
-- if `max_brake_current <= 0`, active braking is treated as disabled and `set_current_brake(...)` returns `false`
+- if the requested brake current is non-positive, or `max_brake_current <= 0`, active braking is treated as disabled and `set_current_brake(...)` returns `false`
 - coasting remains a separate behavior and should use the non-brake command path, such as commanding RPM or current back to zero
 
 This keeps braking explicit, bounded by the vehicle or hardware configuration, and distinct from "release throttle and coast" behavior.

@@ -1,7 +1,6 @@
 #include "goat_vesc/vesc_client.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <cerrno>
 #include <cstring>
 
@@ -77,10 +76,10 @@ bool set_nonblocking(int fd) {
 }
 
 float clamp_brake_current(float requested_amps, float max_brake_current) {
-  if (max_brake_current <= 0.0f) {
+  if (requested_amps <= 0.0f || max_brake_current <= 0.0f) {
     return 0.0f;
   }
-  return std::min(std::fabs(requested_amps), max_brake_current);
+  return std::min(requested_amps, max_brake_current);
 }
 
 std::optional<std::chrono::microseconds> micros_until(const SteadyClock::time_point& deadline,
@@ -696,8 +695,7 @@ bool VescClient::control_watchdog_enabled() const {
   case ControlWatchdogAction::Coast:
     return true;
   case ControlWatchdogAction::BrakeCurrent:
-    return clamp_brake_current(config_.command_watchdog_brake_current, config_.max_brake_current) >
-           0.0f;
+    return config_.command_watchdog_brake_current > 0.0f && config_.max_brake_current > 0.0f;
   }
 
   return false;

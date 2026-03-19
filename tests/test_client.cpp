@@ -783,6 +783,8 @@ void test_brake_current_command_requires_positive_limit() {
   assert(client.connect());
 
   assert(!client.set_current_brake(1.0f));
+  assert(!client.set_current_brake(0.0f));
+  assert(!client.set_current_brake(-1.0f));
   std::this_thread::sleep_for(50ms);
   assert(fake.brake_current_commands.load() == 0);
 
