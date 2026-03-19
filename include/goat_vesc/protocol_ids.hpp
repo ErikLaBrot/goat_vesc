@@ -16,6 +16,8 @@ namespace goat_vesc {
 
 // Maximum payload length the VESC firmware will accept or produce.
 constexpr std::size_t kMaxPayloadBytes = 512;
+static_assert(kMaxPayloadBytes <= 0xFFFF,
+              "Payload ceilings above 65535 bytes require 24-bit framing support.");
 
 // Maximum size of a fully framed packet on the wire:
 //   1 start + 2 length (16-bit, since 512 > 255) + payload + 2 CRC + 1 stop
@@ -24,6 +26,8 @@ constexpr std::size_t kMaxFramedPacketBytes = kMaxPayloadBytes + 6;
 enum class VescPacketLength : std::uint8_t {
   Short = 0x02,
   Medium = 0x03,
+  // Protocol-defined, but unsupported while the payload ceiling stays within
+  // the 16-bit length space.
   Long = 0x04,
 };
 
