@@ -29,7 +29,9 @@ struct VescConfig {
   std::chrono::milliseconds command_watchdog_timeout{0};
   // Safe-stop action to send once when command input goes stale.
   ControlWatchdogAction command_watchdog_action{ControlWatchdogAction::Disabled};
-  // Brake current used by BrakeCurrent watchdog mode. Positive amps are recommended.
+  // Maximum active brake current magnitude allowed by the bridge for this hardware.
+  float max_brake_current{0.0f};
+  // Requested brake current used by BrakeCurrent watchdog mode before clamping.
   float command_watchdog_brake_current{0.0f};
   // Optional wall-clock source used to stamp decoded samples in nanoseconds.
   std::function<std::uint64_t()> wall_time_ns;
@@ -44,6 +46,7 @@ struct VescClientConfigSnapshot {
   std::chrono::milliseconds query_guard_window{0};
   std::chrono::milliseconds command_watchdog_timeout{0};
   ControlWatchdogAction command_watchdog_action{ControlWatchdogAction::Disabled};
+  float max_brake_current{0.0f};
   float command_watchdog_brake_current{0.0f};
 };
 

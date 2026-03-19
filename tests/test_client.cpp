@@ -742,6 +742,7 @@ void test_control_command_delivery() {
   config.motor_poll_interval = 0ms;
   config.poll_response_timeout = 15ms;
   config.query_guard_window = 5ms;
+  config.max_brake_current = 1.0f;
   config.open_serial_fn = [&fake](const VescConfig&, int& fd_out) {
     return fake.open_client_fd(fd_out);
   };
@@ -750,7 +751,7 @@ void test_control_command_delivery() {
   assert(client.connect());
 
   assert(client.set_duty(0.2f));
-  assert(client.set_current_brake(-1.5f));
+  assert(client.set_current_brake(1.5f));
   assert(client.set_servo_pos(0.5f));
 
   wait_until([&] { return fake.duty_commands.load() == 1; }, 500ms,
@@ -761,8 +762,31 @@ void test_control_command_delivery() {
              "servo command was not delivered");
 
   assert(fake.last_duty_raw.load() == 20000);
-  assert(fake.last_brake_current_raw.load() == -1500);
+  assert(fake.last_brake_current_raw.load() == 1000);
   assert(fake.last_servo_raw.load() == 500);
+
+  client.disconnect();
+}
+
+void test_brake_current_command_requires_positive_limit() {
+  FakeVesc fake;
+  VescConfig config;
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+  config.poll_response_timeout = 15ms;
+  config.query_guard_window = 5ms;
+  config.open_serial_fn = [&fake](const VescConfig&, int& fd_out) {
+    return fake.open_client_fd(fd_out);
+  };
+
+  VescClient client(config);
+  assert(client.connect());
+
+  assert(!client.set_current_brake(1.0f));
+  assert(!client.set_current_brake(0.0f));
+  assert(!client.set_current_brake(-1.0f));
+  std::this_thread::sleep_for(50ms);
+  assert(fake.brake_current_commands.load() == 0);
 
   client.disconnect();
 }
@@ -776,6 +800,7 @@ void test_watchdog_brake_current_safe_stop() {
   config.query_guard_window = 5ms;
   config.command_watchdog_timeout = 40ms;
   config.command_watchdog_action = ControlWatchdogAction::BrakeCurrent;
+  config.max_brake_current = 1.5f;
   config.command_watchdog_brake_current = 2.5f;
   config.open_serial_fn = [&fake](const VescConfig&, int& fd_out) {
     return fake.open_client_fd(fd_out);
@@ -793,7 +818,7 @@ void test_watchdog_brake_current_safe_stop() {
 
   wait_until([&] { return fake.brake_current_commands.load() == 1; }, 500ms,
              "watchdog brake command did not fire");
-  assert(fake.last_brake_current_raw.load() == 2500);
+  assert(fake.last_brake_current_raw.load() == 1500);
 
   std::this_thread::sleep_for(80ms);
   assert(fake.brake_current_commands.load() == 1);
@@ -961,6 +986,7 @@ auto test_config_snapshot_tracks_runtime_polling_behavior() -> void {
   config.query_guard_window = 7ms;
   config.command_watchdog_timeout = 40ms;
   config.command_watchdog_action = ControlWatchdogAction::BrakeCurrent;
+  config.max_brake_current = 3.0f;
   config.command_watchdog_brake_current = 2.5f;
 
   VescClient client(config);
@@ -972,6 +998,7 @@ auto test_config_snapshot_tracks_runtime_polling_behavior() -> void {
   assert(initial.query_guard_window == 7ms);
   assert(initial.command_watchdog_timeout == 40ms);
   assert(initial.command_watchdog_action == ControlWatchdogAction::BrakeCurrent);
+  assert(initial.max_brake_current == 3.0f);
   assert(initial.command_watchdog_brake_current == 2.5f);
 
   client.set_imu_poll_interval(0ms);
@@ -984,6 +1011,7 @@ auto test_config_snapshot_tracks_runtime_polling_behavior() -> void {
   assert(updated.query_guard_window == initial.query_guard_window);
   assert(updated.command_watchdog_timeout == initial.command_watchdog_timeout);
   assert(updated.command_watchdog_action == initial.command_watchdog_action);
+  assert(updated.max_brake_current == initial.max_brake_current);
   assert(updated.command_watchdog_brake_current == initial.command_watchdog_brake_current);
 }
 
@@ -1292,6 +1320,7 @@ int main() {
   test_poll_timeout_recovers();
   test_imu_timeout_does_not_starve_motor_polling();
   test_control_command_delivery();
+  test_brake_current_command_requires_positive_limit();
   test_watchdog_brake_current_safe_stop();
   test_watchdog_coast_safe_stop();
   test_connect_disconnect_edges();

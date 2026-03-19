@@ -81,12 +81,13 @@ The client now supports an opt-in stale-command watchdog for bridge-style contro
 
 - set `command_watchdog_timeout` to a positive duration
 - choose `command_watchdog_action`
-- if using `BrakeCurrent`, set `command_watchdog_brake_current` to a positive amp value
+- set `max_brake_current` to the positive hardware-safe brake-current bound
+- if using `BrakeCurrent`, set `command_watchdog_brake_current` to the desired safe-stop current
 
 When enabled, each fresh control command re-arms the watchdog. If no further control command arrives before the timeout, the library sends one safe-stop command:
 
 - `ControlWatchdogAction::Coast` sends `COMM_SET_CURRENT` with `0.0 A`
-- `ControlWatchdogAction::BrakeCurrent` sends `COMM_SET_CURRENT_BRAKE` with the configured brake current
+- `ControlWatchdogAction::BrakeCurrent` sends `COMM_SET_CURRENT_BRAKE` with the configured brake current clamped to `max_brake_current`
 
 The watchdog is intentionally one-shot. After it fires, a new control command must arrive to arm it again.
 
@@ -107,6 +108,18 @@ The important constraint is this:
 
 so the final authority for stale-command safety should still live on the VESC side or in a watchdog mechanism that is continuously refreshed while control is healthy.
 
+### What does bridge braking mean?
+
+For bridge control, `COMM_SET_CURRENT_BRAKE` is the active-brake interface.
+
+- `set_current_brake(...)` requests a brake-current magnitude in amps
+- `set_current_brake(...)` accepts only a positive magnitude
+- the client clamps that request to `VescConfig::max_brake_current`
+- if the requested brake current is non-positive, or `max_brake_current <= 0`, active braking is treated as disabled and `set_current_brake(...)` returns `false`
+- coasting remains a separate behavior and should use the non-brake command path, such as commanding RPM or current back to zero
+
+This keeps braking explicit, bounded by the vehicle or hardware configuration, and distinct from "release throttle and coast" behavior.
+
 ## API Overview
 
 Main type: [`goat_vesc::VescClient`](include/goat_vesc/vesc_client.hpp)
@@ -119,6 +132,7 @@ Watchdog configuration fields:
 
 - `std::chrono::milliseconds command_watchdog_timeout`
 - `ControlWatchdogAction command_watchdog_action`
+- `float max_brake_current`
 - `float command_watchdog_brake_current`
 
 Primary methods:
@@ -168,6 +182,7 @@ int main() {
     config.motor_poll_interval = 50ms;
     config.command_watchdog_timeout = 100ms;
     config.command_watchdog_action = ControlWatchdogAction::BrakeCurrent;
+    config.max_brake_current = 3.0f;
     config.command_watchdog_brake_current = 3.0f;
 
     VescClient client(config);
