@@ -3,6 +3,7 @@ project(goat_vesc VERSION 0.1.0 LANGUAGES CXX)
 
 include(CTest)
 include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 option(GOAT_VESC_BUILD_TESTS "Build tests" ON)
 option(GOAT_VESC_BUILD_EXAMPLES "Build examples" ON)
@@ -43,6 +44,7 @@ add_library(goat_vesc
   src/types.cpp
   src/vesc_client.cpp
 )
+add_library(goat_vesc::goat_vesc ALIAS goat_vesc)
 
 target_include_directories(goat_vesc
   PUBLIC
@@ -78,5 +80,47 @@ endif()
 if(GOAT_VESC_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
+
+set(GOAT_VESC_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
+set(GOAT_VESC_INSTALL_DATADIR "${CMAKE_INSTALL_DATAROOTDIR}/${PROJECT_NAME}")
+
+install(TARGETS goat_vesc
+  EXPORT goat_vescTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(DIRECTORY include/
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+configure_package_config_file(
+  cmake/goat_vescConfig.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/goat_vescConfig.cmake
+  INSTALL_DESTINATION ${GOAT_VESC_INSTALL_CMAKEDIR}
+)
+
+write_basic_package_version_file(
+  ${CMAKE_CURRENT_BINARY_DIR}/goat_vescConfigVersion.cmake
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion
+)
+
+install(EXPORT goat_vescTargets
+  FILE goat_vescTargets.cmake
+  NAMESPACE goat_vesc::
+  DESTINATION ${GOAT_VESC_INSTALL_CMAKEDIR}
+)
+
+install(FILES
+  ${CMAKE_CURRENT_BINARY_DIR}/goat_vescConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/goat_vescConfigVersion.cmake
+  DESTINATION ${GOAT_VESC_INSTALL_CMAKEDIR}
+)
+
+install(FILES package.xml
+  DESTINATION ${GOAT_VESC_INSTALL_DATADIR}
+)
 
 goat_vesc_configure_docs()
