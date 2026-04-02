@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>goat_vesc</name>
+  <version>0.1.0</version>
+  <description>Thread-safe C++ VESC transport library for the GOAT platform.</description>
+  <maintainer email="goat@example.com">GOAT Maintainers</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>cmake</buildtool_depend>
+
+  <export>
+    <build_type>cmake</build_type>
+  </export>
+</package>
