@@ -33,14 +33,16 @@ bridge-v1 behavior.
 
 | Bucket | Count |
 |---|---:|
-| Must-have requirements | 16 |
-| Must-have requirements fully covered | 9 |
-| Must-have requirements partially covered | 1 |
-| Must-have requirements missing | 6 |
-| Open product decisions | 1 |
+| Must-have requirements | 17 |
+| Must-have requirements fully covered | 17 |
+| Must-have requirements partially covered | 0 |
+| Must-have requirements missing | 0 |
+| Open product decisions | 0 |
 
-Bridge-v1 is ready when every `must have` requirement is `covered` and every
-related blocking bug is closed or explicitly accepted.
+All current bridge-v1 `must have` requirements are covered in the shipped code
+and tests, and the related blocking bug issues are closed. Remaining release
+work is checklist and milestone bookkeeping rather than known missing
+bridge-v1 behavior.
 
 ## Protocol Support Matrix
 
@@ -92,12 +94,12 @@ related blocking bug is closed or explicitly accepted.
 
 | ID | Requirement | Rationale | Priority | Status | Evidence | Suggested GitHub issue title |
 |---|---|---|---|---|---|---|
-| BRIDGE-REL-001 | The library shall cleanly shut down after async transport failure without leaving a joinable thread or leaked transport state. | Transport faults must not terminate the process or leave broken client state behind. | must have | missing | not yet covered | Ensure disconnect fully cleans up after async transport failure |
-| BRIDGE-REL-002 | Subscription lifetime handling shall remain safe if subscription handles outlive client shutdown. | Bridge code should not trigger use-after-free by normal teardown ordering. | must have | missing | not yet covered | Fix `SubscriptionHandle` lifetime and ownership safety |
-| BRIDGE-REL-003 | Disconnect shall not hang if the transport thread is blocked waiting for write readiness. | The bridge must be able to stop promptly even under bad transport conditions. | must have | missing | not yet covered | Make disconnect unblock writes and avoid shutdown hangs |
-| BRIDGE-REL-004 | Poll timeouts shall recover without permanently stalling IMU or motor telemetry. | Temporary missed replies should not kill telemetry flow. | must have | partial | test | Harden IMU/motor poll timeout and recovery semantics |
-| BRIDGE-REL-005 | Blocking query deadlines shall be honored, and stale late replies shall not satisfy a newer request. | Bridge diagnostics must not return misleading results after timing faults. | must have | missing | not yet covered | Enforce per-query deadlines and reject stale late replies |
-| BRIDGE-REL-006 | Command submission results shall truthfully reflect whether a command can still be delivered during disconnect races. | Bridge control logic needs accurate command-send outcomes. | must have | missing | not yet covered | Prevent commands from reporting success when dropped during disconnect |
+| BRIDGE-REL-001 | The library shall cleanly shut down after async transport failure without leaving a joinable thread or leaked transport state. | Transport faults must not terminate the process or leave broken client state behind. | must have | covered | test | Ensure disconnect fully cleans up after async transport failure |
+| BRIDGE-REL-002 | Subscription lifetime handling shall remain safe if subscription handles outlive client shutdown. | Bridge code should not trigger use-after-free by normal teardown ordering. | must have | covered | test | Fix `SubscriptionHandle` lifetime and ownership safety |
+| BRIDGE-REL-003 | Disconnect shall not hang if the transport thread is blocked waiting for write readiness. | The bridge must be able to stop promptly even under bad transport conditions. | must have | covered | test | Make disconnect unblock writes and avoid shutdown hangs |
+| BRIDGE-REL-004 | Poll timeouts shall recover without permanently stalling IMU or motor telemetry. | Temporary missed replies should not kill telemetry flow. | must have | covered | test | Harden IMU/motor poll timeout and recovery semantics |
+| BRIDGE-REL-005 | Blocking query deadlines shall be honored, and stale late replies shall not satisfy a newer request. | Bridge diagnostics must not return misleading results after timing faults. | must have | covered | test | Enforce per-query deadlines and reject stale late replies |
+| BRIDGE-REL-006 | Command submission results shall truthfully reflect whether a command can still be delivered during disconnect races. | Bridge control logic needs accurate command-send outcomes. | must have | covered | test | Prevent commands from reporting success when dropped during disconnect |
 | BRIDGE-REL-007 | Sanitizer-enabled builds should run across the library, examples, and tests. | Sanitizers are a practical reliability gate for transport and lifetime bugs. | should have later | covered | build + test | none |
 
 ## Coverage Policy
@@ -117,6 +119,5 @@ bridge-v1 requirements and their public behavior. It does not require literal
 ## Out Of Scope For This Draft
 
 - Full-library requirements beyond bridge v1
-- Final brake semantics
 - Additional `GetValues` fields beyond the agreed bridge-v1 telemetry set
 - Deep runtime diagnostics beyond config introspection

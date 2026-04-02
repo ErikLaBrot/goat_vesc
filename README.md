@@ -26,7 +26,42 @@ cmake --build --preset default
 ctest --preset default
 ```
 
-This will build the ['examples/'](examples/). These are demonstrations of the library basics, and how to implement the library at an application layer.
+This will build the ['examples/'](examples/). These include focused manual
+examples plus a full real-hardware smoke tool for validating telemetry,
+subscriptions, and live command streaming against a real controller.
+
+## Install And Export
+
+`goat_vesc` installs as a reusable CMake package. A clean install emits:
+
+- public headers under `include/goat_vesc/`
+- the `goat_vesc` library artifact
+- CMake package metadata under `lib/cmake/goat_vesc/`
+- `share/goat_vesc/package.xml`
+
+One simple local install flow is:
+
+```bash
+cmake -S . -B build/install-export \
+  -DGOAT_VESC_BUILD_TESTS=OFF \
+  -DGOAT_VESC_BUILD_EXAMPLES=OFF \
+  -DCMAKE_INSTALL_PREFIX="$PWD/install/goat_vesc"
+cmake --build build/install-export
+cmake --install build/install-export
+```
+
+Downstream consumers can then point CMake at that install prefix with
+`CMAKE_PREFIX_PATH` or `goat_vesc_DIR` and use the exported target:
+
+```cmake
+find_package(goat_vesc CONFIG REQUIRED)
+
+add_executable(my_app src/main.cpp)
+target_link_libraries(my_app PRIVATE goat_vesc::goat_vesc)
+```
+
+`goat_vesc_ros` is expected to consume the library through this installed
+package interface rather than via direct source-tree coupling.
 
 ## API At A Glance
 
@@ -53,6 +88,10 @@ Generated HTML lands under `docs/html/`.
 
 For implementation-side context, see
 [`docs/src/ARCHITECTURE.md`](docs/src/ARCHITECTURE.md).
+
+For a short operator-facing overview of commands, telemetry, config options, and
+manual smoke tools, see
+[`docs/src/OPERATOR_QUICK_REFERENCE.md`](docs/src/OPERATOR_QUICK_REFERENCE.md).
 
 ## Release / Workflow Notes
 
