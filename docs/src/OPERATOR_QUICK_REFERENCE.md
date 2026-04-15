@@ -7,25 +7,21 @@ packet framing or serial arbitration themselves.
 
 ## Discovery And Lifecycle
 
-- `VescClient::find_devices()`
-  Returns visible `/dev/ttyACM*` candidates.
-- `connect()`
-  Opens the configured transport and starts the background I/O thread.
-- `disconnect()`
-  Stops the background thread and closes the transport.
-- `is_connected()`
-  Reports whether the client still considers the transport active.
+- `VescClient::find_devices()`: Return visible `/dev/ttyACM*` candidates.
+- `connect()`: Open the configured transport and start the background I/O
+  thread.
+- `disconnect()`: Stop the background thread and close the transport.
+- `is_connected()`: Report whether the client still considers the transport
+  active.
 
 ## Telemetry Access
 
-- `latest_imu()`
-  Returns the latest cached IMU sample, if any.
-- `latest_motor_state()`
-  Returns the latest cached motor telemetry sample, if any.
-- `subscribe_imu(...)`
-  Registers a callback for fresh IMU samples.
-- `subscribe_motor_state(...)`
-  Registers a callback for fresh motor-state samples.
+- `latest_imu()`: Return the latest cached IMU sample, if any.
+- `latest_motor_state()`: Return the latest cached motor telemetry sample, if
+  any.
+- `subscribe_imu(...)`: Register a callback for fresh IMU samples.
+- `subscribe_motor_state(...)`: Register a callback for fresh motor-state
+  samples.
 
 ## Motor Telemetry
 
@@ -65,7 +61,7 @@ For power-oriented monitoring, the most useful fields are usually:
 
 ## Commands
 
-The high-level client currently supports:
+The high-level client supports:
 
 - `set_rpm(...)`
 - `set_duty(...)`
@@ -75,9 +71,9 @@ The high-level client currently supports:
 
 These are the bridge-facing control outputs the library is designed around.
 
-## Runtime Config And Diagnostics
+## Runtime Configuration And Diagnostics
 
-The client currently exposes:
+Runtime adjustment and diagnostic entry points include:
 
 - `set_imu_poll_interval(...)`
 - `set_motor_poll_interval(...)`
@@ -86,7 +82,7 @@ The client currently exposes:
 
 ## `VescConfig` Options
 
-The runtime config object currently includes:
+The runtime config object includes:
 
 - `device_path`
   Serial device path. If empty, the client auto-detects the first
@@ -114,7 +110,7 @@ The runtime config object currently includes:
 - `open_serial_fn`
   Optional custom transport opener used mainly for tests or alternate backends.
 
-## What Is Configurable Today
+## Configuration Model
 
 Config is programmatic today. The library does not include a built-in pre-launch
 file loader for YAML, TOML, JSON, or similar formats.
@@ -125,9 +121,9 @@ The expected pattern today is:
 2. That code populates a `VescConfig`.
 3. The configured `VescClient` is constructed from that object.
 
-## Real Hardware Smoke Tools
+## Manual Tools
 
-Focused manual examples already included:
+Built examples:
 
 - `vesc_probe`
   Connect, query firmware, and verify IMU plus motor telemetry.
@@ -135,9 +131,6 @@ Focused manual examples already included:
   Manual duty-cycle sweep against real hardware.
 - `vesc_servo_sweep`
   Manual servo sweep against real hardware.
-
-New integrated manual smoke tool:
-
 - `vesc_hardware_smoke`
   Runs telemetry polling, live subscriptions, concurrent command streaming, and
   a firmware query under load in one operator-facing hardware smoke pass.
@@ -146,6 +139,8 @@ Operator runner scripts:
 
 - `scripts/run_vesc_probe.sh`
 - `scripts/run_vesc_hardware_smoke.sh`
+- `scripts/run_quality_gate.sh`
 
-These scripts only launch already-built example binaries with transparent,
-operator-visible arguments.
+The runner scripts do not build the examples for you. Build the requested
+target first, then use the script as a thin wrapper around the already-built
+binary.

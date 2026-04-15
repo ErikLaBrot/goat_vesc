@@ -1,4 +1,25 @@
 #!/usr/bin/env bash
+# Integrated hardware smoke runner.
+#
+# Purpose:
+#   Launch the already-built `vesc_hardware_smoke` example with environment-
+#   driven defaults for manual real-hardware validation.
+#
+# Inputs:
+#   Optional CLI flags passed through to the example plus the documented
+#   `VESC_*` environment variables for device, timing, and actuator settings.
+#
+# Outputs:
+#   Runs the `build/default/vesc_hardware_smoke` binary and streams its status
+#   output to the terminal.
+#
+# Usage:
+#   scripts/run_vesc_hardware_smoke.sh
+#   VESC_DEVICE=/dev/ttyACM0 VESC_ARM_ACTUATORS=1 scripts/run_vesc_hardware_smoke.sh
+#
+# Notes:
+#   This wrapper only adds `--arm-actuators` automatically when
+#   `VESC_ARM_ACTUATORS=1`. The target binary must already be built.
 set -euo pipefail
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then

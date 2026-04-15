@@ -1,10 +1,21 @@
 # goat_vesc
 
-`goat_vesc` is the VESC transport library for the GOAT autonomous racer
-platform. It is intended for the GOAT vehicle stack running on a Jetson Orin
-Nano / ARM Linux system and provides a thread-safe transport owner, typed
-protocol helpers, periodic telemetry polling, cached latest-value access, and
-callback-based subscriptions for fresh samples.
+`goat_vesc` is the GOAT racer VESC transport library. It provides a
+thread-safe, C++17 interface for connecting to a controller, exchanging typed
+protocol messages, polling core telemetry, and sending drive or steering
+commands through one transport owner.
+
+## Purpose
+
+This library is intended for higher-level GOAT applications that need:
+
+- a reusable CMake package instead of application-local serial code
+- one place to own transport lifecycle and serialized command writes
+- typed helpers for the bridge-facing VESC message set
+- cached telemetry reads plus callback-based delivery of fresh samples
+
+The library does not include a ROS interface. `goat_vesc_ros` is the ROS-facing
+adapter layer that consumes this installed package.
 
 ## Requirements
 
@@ -26,11 +37,11 @@ cmake --build --preset default
 ctest --preset default
 ```
 
-This will build the ['examples/'](examples/). These include focused manual
-examples plus a full real-hardware smoke tool for validating telemetry,
-subscriptions, and live command streaming against a real controller.
+This builds the library, tests, and the operator-facing examples under
+[`examples/`](examples/), including the integrated
+`vesc_hardware_smoke` manual validation tool.
 
-## Install And Export
+## Installed Surface
 
 `goat_vesc` installs as a reusable CMake package. A clean install emits:
 
@@ -76,7 +87,29 @@ package interface rather than via direct source-tree coupling.
 Lower-level packet and protocol helpers are also installed for applications that
 need direct access to framing or typed request/response parsing.
 
-## API Docs
+## Manual Tools
+
+The repository ships focused real-hardware examples and thin runner scripts for
+manual validation:
+
+- `vesc_probe`
+  Connect, query firmware, and confirm IMU plus motor-state telemetry.
+- `vesc_duty_sweep`
+  Manual duty-cycle sweep against real hardware.
+- `vesc_servo_sweep`
+  Manual servo sweep around a chosen center position.
+- `vesc_hardware_smoke`
+  Integrated smoke pass for telemetry, subscriptions, firmware queries, and
+  concurrent command streaming.
+- `scripts/run_vesc_probe.sh`
+  Launch the built `vesc_probe` binary with transparent operator arguments.
+- `scripts/run_vesc_hardware_smoke.sh`
+  Launch the built `vesc_hardware_smoke` binary with environment-driven
+  defaults.
+- `scripts/run_quality_gate.sh`
+  Run formatting, static analysis, build, and test checks for the repository.
+
+## Documentation
 
 Doxygen-generated API docs can be built with:
 
@@ -86,15 +119,11 @@ cmake --build --preset default --target docs
 
 Generated HTML lands under `docs/html/`.
 
-For implementation-side context, see
-[`docs/src/ARCHITECTURE.md`](docs/src/ARCHITECTURE.md).
-
-For a short operator-facing overview of commands, telemetry, config options, and
-manual smoke tools, see
-[`docs/src/OPERATOR_QUICK_REFERENCE.md`](docs/src/OPERATOR_QUICK_REFERENCE.md).
-
-## Release / Workflow Notes
-
-Bridge readiness requirements, release tracking context, and milestone-oriented
-workflow notes live in
-[`docs/src/BRIDGE_READINESS_CHECKLIST.md`](docs/src/BRIDGE_READINESS_CHECKLIST.md).
+- [`docs/src/ARCHITECTURE.md`](docs/src/ARCHITECTURE.md)
+  Implementation-side architecture notes for transport ownership, scheduling,
+  and callback behavior.
+- [`docs/src/OPERATOR_QUICK_REFERENCE.md`](docs/src/OPERATOR_QUICK_REFERENCE.md)
+  Operator-facing summary of the public library surface, runtime configuration,
+  and manual tools.
+- [`docs/src/BRIDGE_READINESS_CHECKLIST.md`](docs/src/BRIDGE_READINESS_CHECKLIST.md)
+  Requirement and evidence checklist for the bridge-v1 scope.

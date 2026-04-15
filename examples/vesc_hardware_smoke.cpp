@@ -17,8 +17,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cstdlib>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <iomanip>
 #include <iostream>
@@ -39,7 +39,7 @@ namespace {
 using SteadyClock = std::chrono::steady_clock;
 
 struct Options {
-  std::string device_path{};
+  std::string device_path;
   int baud{115200};
   std::chrono::milliseconds imu_poll_interval{20};
   std::chrono::milliseconds motor_poll_interval{50};
@@ -74,6 +74,22 @@ struct TelemetrySnapshot {
   std::optional<VescMotorState> motor;
   std::optional<std::chrono::milliseconds> imu_age;
   std::optional<std::chrono::milliseconds> motor_age;
+};
+
+struct WaitTimeout {
+  std::chrono::milliseconds value;
+};
+
+struct PollInterval {
+  std::chrono::milliseconds value{20ms};
+};
+
+struct PhaseDuration {
+  std::chrono::milliseconds value;
+};
+
+struct CommandPeriod {
+  std::chrono::milliseconds value;
 };
 
 class TelemetryMonitor {
@@ -118,27 +134,26 @@ private:
   std::size_t motor_samples_{0};
   std::optional<VescIMUData> last_imu_;
   std::optional<VescMotorState> last_motor_;
-  SteadyClock::time_point last_imu_seen_{};
-  SteadyClock::time_point last_motor_seen_{};
+  SteadyClock::time_point last_imu_seen_;
+  SteadyClock::time_point last_motor_seen_;
 };
 
 void print_usage(const char* argv0) {
-  std::cout
-      << "Usage: " << argv0 << " [options]\n"
-      << "  --device PATH              Serial device such as /dev/ttyACM0\n"
-      << "  --baud BAUD               Baud rate, default 115200\n"
-      << "  --imu-poll-ms MS          IMU poll interval, default 20\n"
-      << "  --motor-poll-ms MS        Motor poll interval, default 50\n"
-      << "  --phase-ms MS             Per-phase command duration, default 1500\n"
-      << "  --status-ms MS            Status print interval, default 500\n"
-      << "  --duty VALUE              Duty amplitude, default 0.05\n"
-      << "  --current AMPS            Current amplitude in amps, default 10.0\n"
-      << "  --rpm VALUE               RPM target, default 1000\n"
-      << "  --brake-current AMPS      Brake current amplitude, default 0.75\n"
-      << "  --servo-center VALUE      Servo center in [0, 1], default 0.50\n"
-      << "  --servo-amplitude VALUE   Servo half-range, default 0.10\n"
-      << "  --arm-actuators           Enable live command phases\n"
-      << "  -h, --help                Show this help text\n";
+  std::cout << "Usage: " << argv0 << " [options]\n"
+            << "  --device PATH              Serial device such as /dev/ttyACM0\n"
+            << "  --baud BAUD               Baud rate, default 115200\n"
+            << "  --imu-poll-ms MS          IMU poll interval, default 20\n"
+            << "  --motor-poll-ms MS        Motor poll interval, default 50\n"
+            << "  --phase-ms MS             Per-phase command duration, default 1500\n"
+            << "  --status-ms MS            Status print interval, default 500\n"
+            << "  --duty VALUE              Duty amplitude, default 0.05\n"
+            << "  --current AMPS            Current amplitude in amps, default 10.0\n"
+            << "  --rpm VALUE               RPM target, default 1000\n"
+            << "  --brake-current AMPS      Brake current amplitude, default 0.75\n"
+            << "  --servo-center VALUE      Servo center in [0, 1], default 0.50\n"
+            << "  --servo-amplitude VALUE   Servo half-range, default 0.10\n"
+            << "  --arm-actuators           Enable live command phases\n"
+            << "  -h, --help                Show this help text\n";
 }
 
 float clamp_servo(float value) {
@@ -243,22 +258,22 @@ Options parse_args(int argc, char** argv) {
 }
 
 template <typename Predicate>
-bool wait_until(Predicate predicate, std::chrono::milliseconds timeout,
-                std::chrono::milliseconds poll = 20ms) {
-  const auto deadline = SteadyClock::now() + timeout;
+bool wait_until(Predicate predicate, WaitTimeout timeout,
+                PollInterval poll_interval = PollInterval{20ms}) {
+  const auto deadline = SteadyClock::now() + timeout.value;
   while (SteadyClock::now() < deadline) {
     if (predicate()) {
       return true;
     }
-    std::this_thread::sleep_for(poll);
+    std::this_thread::sleep_for(poll_interval.value);
   }
   return predicate();
 }
 
 template <typename T, typename Sender>
 PhaseResult stream_phase(const std::string& name, const std::vector<T>& values, VescClient& client,
-                         std::chrono::milliseconds duration,
-                         std::chrono::milliseconds command_period, Sender sender) {
+                         PhaseDuration phase_duration, CommandPeriod phase_command_period,
+                         Sender sender) {
   PhaseResult result;
   result.name = name;
 
@@ -267,7 +282,7 @@ PhaseResult stream_phase(const std::string& name, const std::vector<T>& values, 
   }
 
   std::cout << "Starting " << name << " phase\n";
-  const auto deadline = SteadyClock::now() + duration;
+  const auto deadline = SteadyClock::now() + phase_duration.value;
   std::size_t index = 0;
   while (SteadyClock::now() < deadline) {
     const T value = values[index % values.size()];
@@ -277,11 +292,25 @@ PhaseResult stream_phase(const std::string& name, const std::vector<T>& values, 
     }
     ++result.commands_sent;
     ++index;
-    std::this_thread::sleep_for(command_period);
+    std::this_thread::sleep_for(phase_command_period.value);
   }
 
   result.ok = true;
   return result;
+}
+
+const char* fw_query_under_load_status(bool arm_actuators, bool query_completed,
+                                       bool query_succeeded) {
+  if (!arm_actuators) {
+    return "skipped";
+  }
+  if (query_succeeded) {
+    return "success";
+  }
+  if (query_completed) {
+    return "timeout/clean miss";
+  }
+  return "not-run";
 }
 
 std::string age_string(const std::optional<std::chrono::milliseconds>& age) {
@@ -339,7 +368,8 @@ int main(int argc, char** argv) {
 
     std::cout << "VESC hardware smoke starting\n";
     std::cout << "  device: "
-              << (config.device_path.empty() ? "auto-detect first /dev/ttyACM*" : config.device_path)
+              << (config.device_path.empty() ? "auto-detect first /dev/ttyACM*"
+                                             : config.device_path)
               << '\n';
     std::cout << "  baud: " << config.baud << '\n';
     std::cout << "  imu_poll_ms: " << config.imu_poll_interval.count() << '\n';
@@ -355,9 +385,10 @@ int main(int argc, char** argv) {
     }
 
     TelemetryMonitor monitor;
-    auto imu_handle = client.subscribe_imu([&monitor](const VescIMUData& imu) { monitor.on_imu(imu); });
-    auto motor_handle =
-        client.subscribe_motor_state([&monitor](const VescMotorState& motor) { monitor.on_motor(motor); });
+    auto imu_handle =
+        client.subscribe_imu([&monitor](const VescIMUData& imu) { monitor.on_imu(imu); });
+    auto motor_handle = client.subscribe_motor_state(
+        [&monitor](const VescMotorState& motor) { monitor.on_motor(motor); });
     (void)imu_handle;
     (void)motor_handle;
 
@@ -370,9 +401,10 @@ int main(int argc, char** argv) {
     std::cout << "Initial firmware query: " << static_cast<int>(initial_fw->major) << '.'
               << static_cast<int>(initial_fw->minor) << '\n';
 
-    const bool got_imu = wait_until([&monitor] { return monitor.snapshot().imu.has_value(); }, 1500ms);
-    const bool got_motor =
-        wait_until([&monitor] { return monitor.snapshot().motor.has_value(); }, 1500ms);
+    const bool got_imu =
+        wait_until([&monitor] { return monitor.snapshot().imu.has_value(); }, WaitTimeout{1500ms});
+    const bool got_motor = wait_until([&monitor] { return monitor.snapshot().motor.has_value(); },
+                                      WaitTimeout{1500ms});
     if (!got_imu || !got_motor) {
       std::cerr << "Did not receive required startup telemetry samples\n";
       client.disconnect();
@@ -418,13 +450,10 @@ int main(int argc, char** argv) {
         };
 
         if (!run_phase(1, [&] {
-              return stream_phase<float>("duty",
-                                         {0.0f, options.duty * 0.5f, options.duty,
-                                          options.duty * 0.5f, 0.0f},
-                                         client, options.phase_duration, 120ms,
-                                         [](VescClient& c, float value) {
-                                           return c.set_duty(value);
-                                         });
+              return stream_phase<float>(
+                  "duty", {0.0f, options.duty * 0.5f, options.duty, options.duty * 0.5f, 0.0f},
+                  client, PhaseDuration{options.phase_duration}, CommandPeriod{120ms},
+                  [](VescClient& c, float value) { return c.set_duty(value); });
             })) {
           command_thread_done.store(true);
           return;
@@ -432,13 +461,11 @@ int main(int argc, char** argv) {
         (void)client.set_duty(0.0f);
 
         if (!run_phase(2, [&] {
-              return stream_phase<float>("current",
-                                         {0.0f, options.current * 0.5f, options.current,
-                                          options.current * 0.5f, 0.0f},
-                                         client, options.phase_duration, 120ms,
-                                         [](VescClient& c, float value) {
-                                           return c.set_current(value);
-                                         });
+              return stream_phase<float>(
+                  "current",
+                  {0.0f, options.current * 0.5f, options.current, options.current * 0.5f, 0.0f},
+                  client, PhaseDuration{options.phase_duration}, CommandPeriod{120ms},
+                  [](VescClient& c, float value) { return c.set_current(value); });
             })) {
           command_thread_done.store(true);
           return;
@@ -446,12 +473,10 @@ int main(int argc, char** argv) {
         (void)client.set_current(0.0f);
 
         if (!run_phase(3, [&] {
-              return stream_phase<int>("rpm",
-                                       {0, options.rpm / 2, options.rpm, options.rpm / 2, 0},
-                                       client, options.phase_duration, 120ms,
-                                       [](VescClient& c, int value) {
-                                         return c.set_rpm(value);
-                                       });
+              return stream_phase<int>("rpm", {0, options.rpm / 2, options.rpm, options.rpm / 2, 0},
+                                       client, PhaseDuration{options.phase_duration},
+                                       CommandPeriod{120ms},
+                                       [](VescClient& c, int value) { return c.set_rpm(value); });
             })) {
           command_thread_done.store(true);
           return;
@@ -466,10 +491,9 @@ int main(int argc, char** argv) {
                    {options.duty, options.servo_center},
                    {options.duty * 0.5f, right},
                    {0.0f, options.servo_center}},
-                  client, options.phase_duration, 140ms,
+                  client, PhaseDuration{options.phase_duration}, CommandPeriod{140ms},
                   [](VescClient& c, const ThrottleSteeringCommand& command) {
-                    return c.set_duty(command.duty) &&
-                           c.set_servo_pos(clamp_servo(command.servo));
+                    return c.set_duty(command.duty) && c.set_servo_pos(clamp_servo(command.servo));
                   });
             })) {
           command_thread_done.store(true);
@@ -479,13 +503,12 @@ int main(int argc, char** argv) {
         (void)client.set_servo_pos(clamp_servo(options.servo_center));
 
         if (!run_phase(5, [&] {
-              return stream_phase<float>("brake_current",
-                                         {options.brake_current * 0.5f, options.brake_current,
-                                          options.brake_current * 0.5f},
-                                         client, options.phase_duration, 120ms,
-                                         [](VescClient& c, float value) {
-                                           return c.set_current_brake(value);
-                                         });
+              return stream_phase<float>(
+                  "brake_current",
+                  {options.brake_current * 0.5f, options.brake_current,
+                   options.brake_current * 0.5f},
+                  client, PhaseDuration{options.phase_duration}, CommandPeriod{120ms},
+                  [](VescClient& c, float value) { return c.set_current_brake(value); });
             })) {
           command_thread_done.store(true);
           return;
@@ -493,13 +516,11 @@ int main(int argc, char** argv) {
         (void)client.set_current(0.0f);
 
         if (!run_phase(6, [&] {
-              return stream_phase<float>("servo",
-                                         {options.servo_center, left, options.servo_center, right,
-                                          options.servo_center},
-                                         client, options.phase_duration, 160ms,
-                                         [](VescClient& c, float value) {
-                                           return c.set_servo_pos(clamp_servo(value));
-                                         });
+              return stream_phase<float>(
+                  "servo",
+                  {options.servo_center, left, options.servo_center, right, options.servo_center},
+                  client, PhaseDuration{options.phase_duration}, CommandPeriod{160ms},
+                  [](VescClient& c, float value) { return c.set_servo_pos(clamp_servo(value)); });
             })) {
           command_thread_done.store(true);
           return;
@@ -510,7 +531,8 @@ int main(int argc, char** argv) {
         command_thread_done.store(true);
       });
     } else {
-      std::cout << "Actuator phases skipped. Re-run with --arm-actuators for the full command smoke.\n";
+      std::cout
+          << "Actuator phases skipped. Re-run with --arm-actuators for the full command smoke.\n";
     }
 
     const auto monitoring_deadline =
@@ -529,8 +551,7 @@ int main(int argc, char** argv) {
           motor_progress_during_commands = true;
         }
         if (active_phase.load() == 3 && snapshot.motor) {
-          rpm_phase_peak_abs_rpm =
-              std::max(rpm_phase_peak_abs_rpm, std::abs(snapshot.motor->rpm));
+          rpm_phase_peak_abs_rpm = std::max(rpm_phase_peak_abs_rpm, std::abs(snapshot.motor->rpm));
           if (std::abs(snapshot.motor->rpm) > 1.0f) {
             rpm_feedback_observed = true;
           }
@@ -582,19 +603,16 @@ int main(int argc, char** argv) {
     if (!options.arm_actuators) {
       success = final_snapshot.imu_samples > 0 && final_snapshot.motor_samples > 0;
     } else {
-      success = !phase_failure.load() && imu_progress_during_commands && motor_progress_during_commands &&
-                fw_query_under_load_completed && cleanup_ok && rpm_feedback_observed;
+      success = !phase_failure.load() && imu_progress_during_commands &&
+                motor_progress_during_commands && fw_query_under_load_completed && cleanup_ok &&
+                rpm_feedback_observed;
     }
 
     std::cout << "Smoke summary:\n";
     std::cout << "  initial_fw_query: success\n";
     std::cout << "  fw_query_under_load: "
-              << (options.arm_actuators
-                      ? (fw_query_under_load_success ? "success"
-                                                    : (fw_query_under_load_completed
-                                                           ? "timeout/clean miss"
-                                                           : "not-run"))
-                      : "skipped")
+              << fw_query_under_load_status(options.arm_actuators, fw_query_under_load_completed,
+                                            fw_query_under_load_success)
               << '\n';
     std::cout << "  imu_samples: " << final_snapshot.imu_samples << '\n';
     std::cout << "  motor_samples: " << final_snapshot.motor_samples << '\n';
@@ -611,8 +629,8 @@ int main(int argc, char** argv) {
     {
       std::lock_guard lock(phase_mutex);
       for (const auto& phase : phase_results) {
-        std::cout << "  phase_" << phase.name << ": " << (phase.ok ? "ok" : "failed")
-                  << " (" << phase.commands_sent << " commands)\n";
+        std::cout << "  phase_" << phase.name << ": " << (phase.ok ? "ok" : "failed") << " ("
+                  << phase.commands_sent << " commands)\n";
       }
     }
 
