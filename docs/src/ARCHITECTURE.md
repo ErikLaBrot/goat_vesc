@@ -72,3 +72,18 @@ cache lock. This gives callers two access patterns:
 
 Callbacks are copied out of the registry before invocation so user code does not
 run while the registry mutex is held.
+
+## Runtime Configuration Boundary
+
+`VescConfig` provides the runtime boundary between higher-level applications and
+the transport layer. The caller decides:
+
+- device path and baud
+- IMU and motor polling cadence
+- reply timeout and query guard window
+- optional watchdog behavior and brake-current limits
+- optional timestamp and transport hooks for tests or alternate backends
+
+Once the client is constructed, the transport thread owns the operational state
+behind those settings. Runtime mutation is intentionally narrow and currently
+limited to poll interval updates through the dedicated setter methods.

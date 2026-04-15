@@ -16,13 +16,13 @@ bridge-v1 behavior.
 
 - `Priority`
   - `must have`: required for bridge v1
-  - `should have later`: useful, but not a v1 release blocker
-  - `open decision`: required area, but semantics are not locked yet
+  - `should have later`: useful, but not a release blocker for bridge v1
+  - `open decision`: important area whose final semantics are not locked yet
 - `Evidence`
-  - `test`
-  - `manual validation`
-  - `code review`
-  - `not yet covered`
+  - `test`: automated evidence in the repository
+  - `manual validation`: operator-facing evidence on real hardware
+  - `code review`: reasoning-based evidence without dedicated execution proof
+  - `not yet covered`: no accepted evidence path captured yet
 - `Status`
   - `covered`: acceptable evidence exists now
   - `partial`: some evidence exists, but not enough for release confidence
@@ -39,10 +39,8 @@ bridge-v1 behavior.
 | Must-have requirements missing | 0 |
 | Open product decisions | 0 |
 
-All current bridge-v1 `must have` requirements are covered in the shipped code
-and tests, and the related blocking bug issues are closed. Remaining release
-work is checklist and milestone bookkeeping rather than known missing
-bridge-v1 behavior.
+This table is a quick roll-up of the checklist rows below. Use the detailed
+sections as the source of truth for requirement-by-requirement evidence.
 
 ## Protocol Support Matrix
 

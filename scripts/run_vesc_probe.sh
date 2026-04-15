@@ -1,4 +1,24 @@
 #!/usr/bin/env bash
+# Probe example runner.
+#
+# Purpose:
+#   Launch the already-built `vesc_probe` example with optional device and baud
+#   overrides for operator bring-up checks.
+#
+# Inputs:
+#   Optional `device_path` and `baud` positional arguments or the `VESC_DEVICE`
+#   and `VESC_BAUD` environment variables.
+#
+# Outputs:
+#   Runs the `build/default/vesc_probe` binary and prints its operator-facing
+#   output to the terminal.
+#
+# Usage:
+#   scripts/run_vesc_probe.sh
+#   scripts/run_vesc_probe.sh /dev/ttyACM0 115200
+#
+# Notes:
+#   The target binary must already exist. This wrapper does not build it.
 set -euo pipefail
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
