@@ -139,7 +139,6 @@ Operator runner scripts:
 
 - `scripts/run_vesc_probe.sh`
 - `scripts/run_vesc_hardware_smoke.sh`
-- `scripts/run_quality_gate.sh`
 
 The runner scripts do not build the examples for you. Build the requested
 target first, then use the script as a thin wrapper around the already-built
