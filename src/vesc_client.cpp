@@ -16,6 +16,12 @@ namespace goat_vesc {
 namespace {
 using SteadyClock = std::chrono::steady_clock;
 constexpr auto kWriteWaitPollInterval = std::chrono::milliseconds(50);
+constexpr std::size_t kConfigSignatureBytes = 4;
+constexpr std::uint32_t kInitialLispReadBytes = 10;
+constexpr std::uint32_t kLispReadChunkBytes = 400;
+constexpr std::size_t kLispWriteChunkBytes = 384;
+constexpr std::uint32_t kEmptyLispEraseBytes = 16;
+constexpr std::uint32_t kLispEraseMarginBytes = 100;
 thread_local VescClient* active_io_client = nullptr;
 
 int baud_to_constant(int baud) {
@@ -119,6 +125,12 @@ void invoke_callbacks(const CallbackMap& callbacks, const Sample& sample) {
       }
     }
   }
+}
+
+bool same_config_signature(const std::vector<std::uint8_t>& lhs,
+                           const std::vector<std::uint8_t>& rhs) {
+  return lhs.size() >= kConfigSignatureBytes && rhs.size() >= kConfigSignatureBytes &&
+         std::equal(lhs.begin(), lhs.begin() + kConfigSignatureBytes, rhs.begin());
 }
 
 } // namespace
@@ -380,28 +392,39 @@ bool VescClient::set_servo_pos(float position) {
 }
 
 std::optional<FwVersion> VescClient::request_fw_version(std::chrono::milliseconds timeout) {
-  if (active_io_client == this || timeout <= std::chrono::milliseconds::zero()) {
+  if (timeout <= std::chrono::milliseconds::zero()) {
+    return std::nullopt;
+  }
+
+  const auto payload =
+      request_payload(VescProtocol::build_fw_version_request(), VescPacketCommID::FwVersion,
+                      SteadyClock::now() + timeout, false);
+  return payload ? VescProtocol::parse_fw_version(*payload) : std::nullopt;
+}
+
+std::optional<VescClient::Payload>
+VescClient::request_payload(std::vector<std::uint8_t> packet, VescPacketCommID expected_id,
+                            SteadyClock::time_point deadline, bool stop_on_timeout) {
+  if (active_io_client == this || packet.empty() || deadline <= SteadyClock::now()) {
     return std::nullopt;
   }
 
   auto state = std::make_shared<QueryState>();
-  const auto deadline = SteadyClock::now() + timeout;
 
   ScheduledRequest request;
-  request.kind = ScheduledRequest::Kind::FwVersion;
-  request.expected_id = static_cast<std::uint8_t>(VescPacketCommID::FwVersion);
-  request.packet = VescProtocol::build_fw_version_request();
+  request.kind = ScheduledRequest::Kind::Query;
+  request.expected_id = static_cast<std::uint8_t>(expected_id);
+  request.packet = std::move(packet);
   request.deadline = deadline;
+  request.stop_on_timeout = stop_on_timeout;
   request.on_success = [state](const Payload& payload) {
-    const auto parsed = VescProtocol::parse_fw_version(payload);
     std::lock_guard lock(state->mutex);
-    state->result = parsed;
+    state->result = payload;
     state->completed = true;
     state->cv.notify_all();
   };
   request.on_timeout = [state] {
     std::lock_guard lock(state->mutex);
-    state->result = std::nullopt;
     state->completed = true;
     state->cv.notify_all();
   };
@@ -418,6 +441,255 @@ std::optional<FwVersion> VescClient::request_fw_version(std::chrono::millisecond
   std::unique_lock lock(state->mutex);
   state->cv.wait(lock, [&state] { return state->completed; });
   return state->result;
+}
+
+std::optional<MotorConfigImage>
+VescClient::request_motor_config_until(SteadyClock::time_point deadline) {
+  const auto payload =
+      request_payload(VescProtocol::build_get_motor_config_request(),
+                      VescPacketCommID::GetMotorConfig, deadline, true);
+  return payload ? VescProtocol::parse_motor_config(*payload) : std::nullopt;
+}
+
+std::optional<MotorConfigImage>
+VescClient::request_motor_config(std::chrono::milliseconds timeout) {
+  if (timeout <= std::chrono::milliseconds::zero()) {
+    return std::nullopt;
+  }
+  const auto deadline = SteadyClock::now() + timeout;
+  std::unique_lock lock(management_mutex_, std::defer_lock);
+  if (!lock.try_lock_until(deadline)) {
+    return std::nullopt;
+  }
+  return request_motor_config_until(deadline);
+}
+
+VescOperationResult VescClient::write_motor_config(const MotorConfigImage& image,
+                                                   std::chrono::milliseconds timeout) {
+  const auto packet = VescProtocol::build_set_motor_config_request(image);
+  if (packet.empty()) {
+    return VescOperationResult::InvalidData;
+  }
+
+  const auto deadline = SteadyClock::now() + timeout;
+  std::unique_lock lock(management_mutex_, std::defer_lock);
+  if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
+    return VescOperationResult::NoReply;
+  }
+
+  const auto current = request_motor_config_until(deadline);
+  if (!current) {
+    return VescOperationResult::NoReply;
+  }
+  if (!same_config_signature(image.bytes, current->bytes)) {
+    return VescOperationResult::IncompatibleData;
+  }
+
+  const auto reply =
+      request_payload(packet, VescPacketCommID::SetMotorConfig, deadline, true);
+  if (!reply) {
+    return VescOperationResult::NoReply;
+  }
+  return VescProtocol::parse_config_ack(*reply, VescPacketCommID::SetMotorConfig)
+             ? VescOperationResult::Success
+             : VescOperationResult::Rejected;
+}
+
+std::optional<AppConfigImage>
+VescClient::request_app_config_until(SteadyClock::time_point deadline) {
+  const auto payload =
+      request_payload(VescProtocol::build_get_app_config_request(), VescPacketCommID::GetAppConfig,
+                      deadline, true);
+  return payload ? VescProtocol::parse_app_config(*payload) : std::nullopt;
+}
+
+std::optional<AppConfigImage>
+VescClient::request_app_config(std::chrono::milliseconds timeout) {
+  if (timeout <= std::chrono::milliseconds::zero()) {
+    return std::nullopt;
+  }
+  const auto deadline = SteadyClock::now() + timeout;
+  std::unique_lock lock(management_mutex_, std::defer_lock);
+  if (!lock.try_lock_until(deadline)) {
+    return std::nullopt;
+  }
+  return request_app_config_until(deadline);
+}
+
+VescOperationResult VescClient::write_app_config(const AppConfigImage& image,
+                                                 AppConfigStorage storage,
+                                                 std::chrono::milliseconds timeout) {
+  const auto packet = VescProtocol::build_set_app_config_request(image, storage);
+  if (packet.empty()) {
+    return VescOperationResult::InvalidData;
+  }
+
+  const auto deadline = SteadyClock::now() + timeout;
+  std::unique_lock lock(management_mutex_, std::defer_lock);
+  if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
+    return VescOperationResult::NoReply;
+  }
+
+  const auto current = request_app_config_until(deadline);
+  if (!current) {
+    return VescOperationResult::NoReply;
+  }
+  if (!same_config_signature(image.bytes, current->bytes)) {
+    return VescOperationResult::IncompatibleData;
+  }
+
+  const auto expected_id = storage == AppConfigStorage::Persistent
+                               ? VescPacketCommID::SetAppConfig
+                               : VescPacketCommID::SetAppConfigNoStore;
+  const auto reply = request_payload(packet, expected_id, deadline, true);
+  if (!reply) {
+    return VescOperationResult::NoReply;
+  }
+  return VescProtocol::parse_config_ack(*reply, expected_id) ? VescOperationResult::Success
+                                                             : VescOperationResult::Rejected;
+}
+
+std::optional<LispCodeImage> VescClient::request_lisp_code(std::chrono::milliseconds timeout) {
+  if (timeout <= std::chrono::milliseconds::zero()) {
+    return std::nullopt;
+  }
+  const auto deadline = SteadyClock::now() + timeout;
+  std::unique_lock lock(management_mutex_, std::defer_lock);
+  if (!lock.try_lock_until(deadline)) {
+    return std::nullopt;
+  }
+
+  const auto first =
+      request_payload(VescProtocol::build_lisp_read_request(kInitialLispReadBytes, 0),
+                      VescPacketCommID::LispReadCode, deadline, true);
+  if (!first) {
+    return std::nullopt;
+  }
+
+  std::uint32_t total_size = 0;
+  std::uint32_t offset = 0;
+  auto chunk = VescProtocol::parse_lisp_read_reply(*first, total_size, offset);
+  if (!chunk || offset != 0) {
+    return std::nullopt;
+  }
+  if (total_size == 0) {
+    return LispCodeImage{};
+  }
+  if (total_size < kInitialLispReadBytes || chunk->size() != kInitialLispReadBytes) {
+    return std::nullopt;
+  }
+
+  LispCodeImage image;
+  image.bytes.reserve(total_size);
+  image.bytes.insert(image.bytes.end(), chunk->begin(), chunk->end());
+
+  while (image.bytes.size() < total_size) {
+    const auto remaining = total_size - static_cast<std::uint32_t>(image.bytes.size());
+    const auto requested = std::min(kLispReadChunkBytes, remaining);
+    const auto reply =
+        request_payload(VescProtocol::build_lisp_read_request(
+                            requested, static_cast<std::uint32_t>(image.bytes.size())),
+                        VescPacketCommID::LispReadCode, deadline, true);
+    if (!reply) {
+      return std::nullopt;
+    }
+
+    std::uint32_t reply_total = 0;
+    std::uint32_t reply_offset = 0;
+    chunk = VescProtocol::parse_lisp_read_reply(*reply, reply_total, reply_offset);
+    if (!chunk || reply_total != total_size || reply_offset != image.bytes.size() ||
+        chunk->size() != requested) {
+      return std::nullopt;
+    }
+    image.bytes.insert(image.bytes.end(), chunk->begin(), chunk->end());
+  }
+
+  return image;
+}
+
+VescOperationResult VescClient::erase_lisp_code_until(std::uint32_t size,
+                                                      SteadyClock::time_point deadline) {
+  const auto packet = VescProtocol::build_lisp_erase_request(size);
+  if (packet.empty()) {
+    return VescOperationResult::InvalidData;
+  }
+
+  const auto reply =
+      request_payload(packet, VescPacketCommID::LispEraseCode, deadline, true);
+  if (!reply) {
+    return VescOperationResult::NoReply;
+  }
+  return VescProtocol::parse_bool_ack(*reply, VescPacketCommID::LispEraseCode)
+             ? VescOperationResult::Success
+             : VescOperationResult::Rejected;
+}
+
+VescOperationResult VescClient::erase_lisp_code(std::chrono::milliseconds timeout) {
+  const auto deadline = SteadyClock::now() + timeout;
+  std::unique_lock lock(management_mutex_, std::defer_lock);
+  if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
+    return VescOperationResult::NoReply;
+  }
+  return erase_lisp_code_until(kEmptyLispEraseBytes, deadline);
+}
+
+VescOperationResult VescClient::write_lisp_code(const LispCodeImage& image,
+                                                std::chrono::milliseconds timeout) {
+  auto packed = VescProtocol::pack_lisp_code(image);
+  if (packed.empty()) {
+    return VescOperationResult::InvalidData;
+  }
+
+  const auto deadline = SteadyClock::now() + timeout;
+  std::unique_lock lock(management_mutex_, std::defer_lock);
+  if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
+    return VescOperationResult::NoReply;
+  }
+
+  const auto erase_size = static_cast<std::uint32_t>(
+      image.bytes.size() + 2U + static_cast<std::size_t>(kLispEraseMarginBytes));
+  const auto erase_result = erase_lisp_code_until(erase_size, deadline);
+  if (erase_result != VescOperationResult::Success) {
+    return erase_result;
+  }
+
+  std::uint32_t offset = 0;
+  while (offset < packed.size()) {
+    const auto chunk_size = std::min(kLispWriteChunkBytes, packed.size() - offset);
+    const auto chunk_begin = packed.begin() + static_cast<std::ptrdiff_t>(offset);
+    Payload chunk(chunk_begin, chunk_begin + static_cast<std::ptrdiff_t>(chunk_size));
+    const auto reply =
+        request_payload(VescProtocol::build_lisp_write_request(chunk, offset),
+                        VescPacketCommID::LispWriteCode, deadline, true);
+    if (!reply) {
+      return VescOperationResult::NoReply;
+    }
+    if (!VescProtocol::parse_lisp_write_ack(*reply, offset)) {
+      return VescOperationResult::Rejected;
+    }
+    offset += static_cast<std::uint32_t>(chunk_size);
+  }
+
+  return VescOperationResult::Success;
+}
+
+VescOperationResult VescClient::set_lisp_running(bool running,
+                                                 std::chrono::milliseconds timeout) {
+  const auto deadline = SteadyClock::now() + timeout;
+  std::unique_lock lock(management_mutex_, std::defer_lock);
+  if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
+    return VescOperationResult::NoReply;
+  }
+
+  const auto reply =
+      request_payload(VescProtocol::build_lisp_set_running_request(running),
+                      VescPacketCommID::LispSetRunning, deadline, true);
+  if (!reply) {
+    return VescOperationResult::NoReply;
+  }
+  return VescProtocol::parse_bool_ack(*reply, VescPacketCommID::LispSetRunning)
+             ? VescOperationResult::Success
+             : VescOperationResult::Rejected;
 }
 
 std::uint64_t VescClient::wall_time_ns() const {
@@ -444,7 +716,9 @@ void VescClient::io_loop() {
       }
     }
 
-    handle_request_timeout();
+    if (handle_request_timeout()) {
+      break;
+    }
 
     const auto now = SteadyClock::now();
     auto wait_time = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -551,7 +825,9 @@ void VescClient::io_loop() {
       break;
     }
 
-    handle_request_timeout();
+    if (handle_request_timeout()) {
+      break;
+    }
 
     bool has_in_flight = false;
     {
@@ -637,7 +913,7 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
   }
 }
 
-void VescClient::handle_request_timeout() {
+bool VescClient::handle_request_timeout() {
   std::optional<ScheduledRequest> timed_out;
   std::vector<ScheduledRequest> expired_queries;
   {
@@ -658,6 +934,10 @@ void VescClient::handle_request_timeout() {
     }
   }
 
+  const bool stop_transport = timed_out && timed_out->stop_on_timeout;
+  if (stop_transport) {
+    running_.store(false);
+  }
   if (timed_out && timed_out->on_timeout) {
     timed_out->on_timeout();
   }
@@ -666,6 +946,7 @@ void VescClient::handle_request_timeout() {
       expired.on_timeout();
     }
   }
+  return stop_transport;
 }
 
 bool VescClient::enqueue_control_command(std::vector<std::uint8_t> packet) {

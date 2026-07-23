@@ -45,6 +45,25 @@ public:
    * @return Fully framed packet ready to write to the transport.
    */
   static Payload build_get_imu_data_request();
+  /** @brief Builds a request for the active motor configuration. */
+  static Payload build_get_motor_config_request();
+  /** @brief Builds a request that persists a motor configuration image. */
+  static Payload build_set_motor_config_request(const MotorConfigImage& image);
+  /** @brief Builds a request for the active application configuration. */
+  static Payload build_get_app_config_request();
+  /** @brief Builds a request that applies an application configuration image. */
+  static Payload build_set_app_config_request(const AppConfigImage& image,
+                                              AppConfigStorage storage);
+  /** @brief Builds a request for a chunk of stored LispBM code. */
+  static Payload build_lisp_read_request(std::uint32_t length, std::uint32_t offset);
+  /** @brief Builds a request to erase the LispBM code partition. */
+  static Payload build_lisp_erase_request(std::uint32_t size);
+  /** @brief Builds a request to write one packed LispBM code chunk. */
+  static Payload build_lisp_write_request(const Payload& chunk, std::uint32_t offset);
+  /** @brief Builds a request to start or stop LispBM execution. */
+  static Payload build_lisp_set_running_request(bool running);
+  /** @brief Adds the firmware storage header, CRC, and zero flags to LispBM code. */
+  static Payload pack_lisp_code(const LispCodeImage& image);
   /**
    * @brief Builds a `COMM_SET_RPM` command packet.
    * @param rpm Target RPM value.
@@ -94,6 +113,26 @@ public:
    * @return Parsed IMU sample or `std::nullopt` if malformed.
    */
   static std::optional<VescIMUData> parse_get_imu_data(const Payload& payload);
+  /** @brief Parses and strips a motor-configuration response ID. */
+  static std::optional<MotorConfigImage> parse_motor_config(const Payload& payload);
+  /** @brief Parses and strips an application-configuration response ID. */
+  static std::optional<AppConfigImage> parse_app_config(const Payload& payload);
+  /**
+   * @brief Parses a LispBM code chunk and returns its data bytes.
+   *
+   * @param payload Raw reply payload.
+   * @param total_size Receives the complete code-image size.
+   * @param offset Receives this chunk's offset.
+   */
+  static std::optional<Payload> parse_lisp_read_reply(const Payload& payload,
+                                                      std::uint32_t& total_size,
+                                                      std::uint32_t& offset);
+  /** @brief Validates a one-byte configuration acknowledgement. */
+  static bool parse_config_ack(const Payload& payload, VescPacketCommID expected_id);
+  /** @brief Validates an accepted LispBM write acknowledgement and offset. */
+  static bool parse_lisp_write_ack(const Payload& payload, std::uint32_t expected_offset);
+  /** @brief Validates an accepted ID-plus-boolean acknowledgement. */
+  static bool parse_bool_ack(const Payload& payload, VescPacketCommID expected_id);
 
 private:
   // Wraps a payload in the VESC framing: [start | len... | payload | crc | stop]

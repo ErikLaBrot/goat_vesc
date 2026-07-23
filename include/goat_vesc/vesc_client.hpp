@@ -247,6 +247,80 @@ public:
    */
   std::optional<FwVersion> request_fw_version(std::chrono::milliseconds timeout);
 
+  /**
+   * @brief Reads the active firmware-native motor configuration.
+   *
+   * The returned bytes include the firmware-generated schema signature.
+   * Returns `std::nullopt` on invalid reply, timeout, or disconnect.
+   *
+   * @param timeout Overall deadline including management-lock and scheduler wait.
+   * @return Active motor image or `std::nullopt`.
+   */
+  std::optional<MotorConfigImage> request_motor_config(std::chrono::milliseconds timeout);
+
+  /**
+   * @brief Persists and applies a motor configuration after checking its schema signature.
+   * @param image Firmware-native image to write.
+   * @param timeout Overall operation deadline.
+   * @return Controller operation result.
+   */
+  VescOperationResult write_motor_config(const MotorConfigImage& image,
+                                         std::chrono::milliseconds timeout);
+
+  /**
+   * @brief Reads the active firmware-native application configuration.
+   * @param timeout Overall operation deadline.
+   * @return Active application image or `std::nullopt`.
+   */
+  std::optional<AppConfigImage> request_app_config(std::chrono::milliseconds timeout);
+
+  /**
+   * @brief Applies an application configuration after checking its schema signature.
+   * @param image Firmware-native image to apply.
+   * @param storage Volatile or persistent storage behavior.
+   * @param timeout Overall operation deadline.
+   * @return Controller operation result.
+   */
+  VescOperationResult write_app_config(const AppConfigImage& image, AppConfigStorage storage,
+                                       std::chrono::milliseconds timeout);
+
+  /**
+   * @brief Reads the stored LispBM source/import image in bounded chunks.
+   *
+   * An engaged result with an empty byte vector means no code is stored.
+   *
+   * @param timeout Overall operation deadline.
+   * @return Stored code image or `std::nullopt`.
+   */
+  std::optional<LispCodeImage> request_lisp_code(std::chrono::milliseconds timeout);
+
+  /**
+   * @brief Erases stored LispBM code, which also stops LispBM execution.
+   * @param timeout Overall operation deadline.
+   * @return Controller operation result.
+   */
+  VescOperationResult erase_lisp_code(std::chrono::milliseconds timeout);
+
+  /**
+   * @brief Erases and uploads LispBM code, leaving execution stopped.
+   *
+   * Call set_lisp_running() explicitly to start the uploaded code.
+   *
+   * @param image Code image to upload.
+   * @param timeout Overall operation deadline.
+   * @return Controller operation result.
+   */
+  VescOperationResult write_lisp_code(const LispCodeImage& image,
+                                      std::chrono::milliseconds timeout);
+
+  /**
+   * @brief Explicitly starts or stops LispBM execution.
+   * @param running `true` to start or restart, `false` to stop.
+   * @param timeout Overall operation deadline.
+   * @return Controller operation result.
+   */
+  VescOperationResult set_lisp_running(bool running, std::chrono::milliseconds timeout);
+
 private:
   using Payload = VescPacketParser::Payload;
   using SteadyClock = std::chrono::steady_clock;
@@ -255,7 +329,7 @@ private:
     std::mutex mutex;
     std::condition_variable cv;
     bool completed{false};
-    std::optional<FwVersion> result;
+    std::optional<Payload> result;
   };
 
   struct PollChannel {
@@ -268,12 +342,13 @@ private:
   };
 
   struct ScheduledRequest {
-    enum class Kind { PollImu, PollMotorState, FwVersion };
+    enum class Kind { PollImu, PollMotorState, Query };
 
     Kind kind;
     std::uint8_t expected_id{0};
     std::vector<std::uint8_t> packet;
     SteadyClock::time_point deadline{};
+    bool stop_on_timeout{false};
     std::function<void(const Payload&)> on_success;
     std::function<void()> on_timeout;
   };
@@ -301,6 +376,7 @@ private:
   std::atomic<bool> running_{false};
 
   std::mutex scheduler_mutex_;
+  std::timed_mutex management_mutex_;
   std::deque<std::vector<std::uint8_t>> command_queue_;
   std::deque<ScheduledRequest> request_queue_;
   std::optional<ScheduledRequest> in_flight_request_;
@@ -319,7 +395,16 @@ private:
 
   void io_loop();
   void dispatch_payload(const Payload& payload, std::uint64_t stamp_ns);
-  void handle_request_timeout();
+  bool handle_request_timeout();
+  std::optional<Payload> request_payload(std::vector<std::uint8_t> packet,
+                                         VescPacketCommID expected_id,
+                                         SteadyClock::time_point deadline,
+                                         bool stop_on_timeout);
+  std::optional<MotorConfigImage>
+  request_motor_config_until(SteadyClock::time_point deadline);
+  std::optional<AppConfigImage> request_app_config_until(SteadyClock::time_point deadline);
+  VescOperationResult erase_lisp_code_until(std::uint32_t size,
+                                            SteadyClock::time_point deadline);
 
   bool enqueue_control_command(std::vector<std::uint8_t> packet);
   bool control_watchdog_enabled() const;

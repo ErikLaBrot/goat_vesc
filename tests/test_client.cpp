@@ -33,6 +33,10 @@ struct VescClientTestAccess {
     return client->scheduler_mutex_;
   }
 
+  static auto management_mutex(VescClient* client) -> std::timed_mutex& {
+    return client->management_mutex_;
+  }
+
   static auto running(VescClient* client) -> std::atomic<bool>& {
     return client->running_;
   }
@@ -121,6 +125,20 @@ std::vector<std::uint8_t> make_values_response(std::int32_t rpm) {
   append_i32(payload, 88);
   payload.push_back(0);
   return frame_payload(payload);
+}
+
+std::vector<std::uint8_t> make_config_response(VescPacketCommID id,
+                                               const std::vector<std::uint8_t>& image) {
+  std::vector<std::uint8_t> payload{static_cast<std::uint8_t>(id)};
+  payload.insert(payload.end(), image.begin(), image.end());
+  return frame_payload(payload);
+}
+
+std::vector<std::uint8_t> make_bool_ack(VescPacketCommID id, bool accepted) {
+  return frame_payload({
+      static_cast<std::uint8_t>(id),
+      static_cast<std::uint8_t>(accepted),
+  });
 }
 
 std::int16_t read_i16(const std::vector<std::uint8_t>& payload, std::size_t offset) {
@@ -495,10 +513,30 @@ struct FakeVesc {
   std::atomic<int> duty_commands{0};
   std::atomic<int> brake_current_commands{0};
   std::atomic<int> servo_commands{0};
+  std::atomic<int> motor_config_writes{0};
+  std::atomic<int> app_config_reads{0};
+  std::atomic<int> app_config_persistent_writes{0};
+  std::atomic<int> app_config_volatile_writes{0};
+  std::atomic<int> lisp_reads{0};
+  std::atomic<int> lisp_erases{0};
+  std::atomic<int> lisp_writes{0};
+  std::atomic<int> lisp_run_commands{0};
   std::atomic<std::int32_t> last_current_raw{0};
   std::atomic<std::int32_t> last_duty_raw{0};
   std::atomic<std::int32_t> last_brake_current_raw{0};
   std::atomic<std::int16_t> last_servo_raw{0};
+  std::atomic<bool> respond_to_management{true};
+  std::atomic<bool> reject_lisp_write{false};
+
+  std::vector<std::uint8_t> management_history() const {
+    std::lock_guard lock(management_history_mutex_);
+    return management_history_;
+  }
+
+  void clear_management_history() {
+    std::lock_guard lock(management_history_mutex_);
+    management_history_.clear();
+  }
 
 private:
   void run() {
@@ -540,6 +578,107 @@ private:
                 write_all(server_fd_.get(), make_fw_response());
               } else {
                 schedule_response(delay, make_fw_response());
+              }
+            } else if (id ==
+                       static_cast<std::uint8_t>(VescPacketCommID::GetMotorConfig)) {
+              record_management(id);
+              if (respond_to_management.load()) {
+                write_all(server_fd_.get(),
+                          make_config_response(VescPacketCommID::GetMotorConfig, motor_config_));
+              }
+            } else if (id ==
+                       static_cast<std::uint8_t>(VescPacketCommID::SetMotorConfig)) {
+              record_management(id);
+              ++motor_config_writes;
+              if (respond_to_management.load() && payload->size() >= 5 &&
+                  std::equal(payload->begin() + 1, payload->begin() + 5,
+                             motor_config_.begin())) {
+                motor_config_.assign(payload->begin() + 1, payload->end());
+                write_all(server_fd_.get(), frame_payload({id}));
+              }
+            } else if (id ==
+                       static_cast<std::uint8_t>(VescPacketCommID::GetAppConfig)) {
+              record_management(id);
+              ++app_config_reads;
+              if (respond_to_management.load()) {
+                write_all(server_fd_.get(),
+                          make_config_response(VescPacketCommID::GetAppConfig, app_config_));
+              }
+            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetAppConfig) ||
+                       id ==
+                           static_cast<std::uint8_t>(VescPacketCommID::SetAppConfigNoStore)) {
+              record_management(id);
+              if (id == static_cast<std::uint8_t>(VescPacketCommID::SetAppConfig)) {
+                ++app_config_persistent_writes;
+              } else {
+                ++app_config_volatile_writes;
+              }
+              if (respond_to_management.load() && payload->size() >= 5 &&
+                  std::equal(payload->begin() + 1, payload->begin() + 5,
+                             app_config_.begin())) {
+                app_config_.assign(payload->begin() + 1, payload->end());
+                write_all(server_fd_.get(), frame_payload({id}));
+              }
+            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::LispReadCode)) {
+              record_management(id);
+              ++lisp_reads;
+              if (!respond_to_management.load() || payload->size() != 9) {
+                continue;
+              }
+              const auto length = read_i32(*payload, 1);
+              const auto offset = read_i32(*payload, 5);
+              if (lisp_code_.empty()) {
+                std::vector<std::uint8_t> reply{id};
+                append_i32(reply, 0);
+                append_i32(reply, 0);
+                write_all(server_fd_.get(), frame_payload(reply));
+              } else if (length > 0 && offset >= 0 &&
+                         static_cast<std::size_t>(offset + length) <= lisp_code_.size()) {
+                std::vector<std::uint8_t> reply{id};
+                append_i32(reply, static_cast<std::int32_t>(lisp_code_.size()));
+                append_i32(reply, offset);
+                reply.insert(reply.end(), lisp_code_.begin() + offset,
+                             lisp_code_.begin() + offset + length);
+                write_all(server_fd_.get(), frame_payload(reply));
+              }
+            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::LispEraseCode)) {
+              record_management(id);
+              ++lisp_erases;
+              if (respond_to_management.load()) {
+                lisp_code_.clear();
+                packed_lisp_.clear();
+                write_all(server_fd_.get(), make_bool_ack(VescPacketCommID::LispEraseCode, true));
+              }
+            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::LispWriteCode)) {
+              record_management(id);
+              ++lisp_writes;
+              if (!respond_to_management.load() || payload->size() < 6) {
+                continue;
+              }
+              const auto offset = static_cast<std::uint32_t>(read_i32(*payload, 1));
+              const bool accepted = !reject_lisp_write.exchange(false);
+              if (accepted) {
+                const auto chunk_size = payload->size() - 5;
+                packed_lisp_.resize(std::max(packed_lisp_.size(),
+                                             static_cast<std::size_t>(offset) + chunk_size));
+                std::copy(payload->begin() + 5, payload->end(),
+                          packed_lisp_.begin() + offset);
+                if (packed_lisp_.size() >= 8) {
+                  const auto code_size = static_cast<std::uint32_t>(read_i32(packed_lisp_, 0));
+                  if (packed_lisp_.size() >= static_cast<std::size_t>(code_size) + 8U) {
+                    lisp_code_.assign(packed_lisp_.begin() + 8,
+                                      packed_lisp_.begin() + 8 + code_size);
+                  }
+                }
+              }
+              std::vector<std::uint8_t> reply{id, static_cast<std::uint8_t>(accepted)};
+              append_i32(reply, static_cast<std::int32_t>(offset));
+              write_all(server_fd_.get(), frame_payload(reply));
+            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::LispSetRunning)) {
+              record_management(id);
+              ++lisp_run_commands;
+              if (respond_to_management.load() && payload->size() == 2) {
+                write_all(server_fd_.get(), make_bool_ack(VescPacketCommID::LispSetRunning, true));
               }
             } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetRpm) &&
                        payload->size() == 5) {
@@ -584,9 +723,20 @@ private:
   int dropped_value_replies_{0};
   bool respond_fw_{true};
   std::vector<std::chrono::milliseconds> fw_response_delays_;
+  std::vector<std::uint8_t> motor_config_{0x10, 0x20, 0x30, 0x40, 0x01};
+  std::vector<std::uint8_t> app_config_{0x50, 0x60, 0x70, 0x80, 0x02};
+  std::vector<std::uint8_t> lisp_code_ = std::vector<std::uint8_t>(425, 0x2A);
+  std::vector<std::uint8_t> packed_lisp_;
+  mutable std::mutex management_history_mutex_;
+  std::vector<std::uint8_t> management_history_;
   std::mutex response_threads_mutex_;
   std::vector<std::thread> response_threads_;
   std::thread worker_;
+
+  void record_management(std::uint8_t id) {
+    std::lock_guard lock(management_history_mutex_);
+    management_history_.push_back(id);
+  }
 
   void schedule_response(std::chrono::milliseconds delay, std::vector<std::uint8_t> packet) {
     std::lock_guard lock(response_threads_mutex_);
@@ -1292,6 +1442,157 @@ auto test_concurrent_poll_updates_keep_client_responsive() -> void {
   client.disconnect();
 }
 
+void test_configuration_management_and_polling() {
+  FakeVesc fake;
+  auto config = config_for(fake);
+  config.imu_poll_interval = 15ms;
+  config.motor_poll_interval = 25ms;
+  config.poll_response_timeout = 10ms;
+  config.query_guard_window = 2ms;
+
+  VescClient client(config);
+  assert(client.connect());
+  wait_until([&] { return fake.imu_requests.load() >= 2; }, 500ms,
+             "polling did not start before configuration operations");
+
+  const auto motor = client.request_motor_config(500ms);
+  assert(motor &&
+         motor->bytes == std::vector<std::uint8_t>({0x10, 0x20, 0x30, 0x40, 0x01}));
+
+  auto updated_motor = *motor;
+  updated_motor.bytes.back() = 0x22;
+  assert(client.write_motor_config(updated_motor, 500ms) == VescOperationResult::Success);
+  assert(client.request_motor_config(500ms)->bytes == updated_motor.bytes);
+
+  auto incompatible_motor = updated_motor;
+  incompatible_motor.bytes.front() ^= 0xFF;
+  const auto writes_before_rejection = fake.motor_config_writes.load();
+  assert(client.write_motor_config(incompatible_motor, 500ms) ==
+         VescOperationResult::IncompatibleData);
+  assert(fake.motor_config_writes.load() == writes_before_rejection);
+  assert(client.write_motor_config(MotorConfigImage{{1, 2, 3}}, 500ms) ==
+         VescOperationResult::InvalidData);
+
+  const auto app = client.request_app_config(500ms);
+  assert(app &&
+         app->bytes == std::vector<std::uint8_t>({0x50, 0x60, 0x70, 0x80, 0x02}));
+
+  auto volatile_app = *app;
+  volatile_app.bytes.back() = 0x33;
+  assert(client.write_app_config(volatile_app, AppConfigStorage::Volatile, 500ms) ==
+         VescOperationResult::Success);
+  assert(fake.app_config_volatile_writes.load() == 1);
+
+  auto persistent_app = volatile_app;
+  persistent_app.bytes.back() = 0x44;
+  assert(client.write_app_config(persistent_app, AppConfigStorage::Persistent, 500ms) ==
+         VescOperationResult::Success);
+  assert(fake.app_config_persistent_writes.load() == 1);
+  assert(client.request_app_config(500ms)->bytes == persistent_app.bytes);
+
+  const auto polls_before = fake.imu_requests.load();
+  wait_until([&] { return fake.imu_requests.load() > polls_before; }, 500ms,
+             "polling did not resume after configuration operations");
+  client.disconnect();
+}
+
+void test_management_operations_are_serialized() {
+  FakeVesc fake;
+  auto config = config_for(fake);
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+
+  VescClient client(config);
+  assert(client.connect());
+  const auto current = client.request_app_config(500ms);
+  assert(current);
+
+  auto first = *current;
+  auto second = *current;
+  first.bytes.back() = 0xA1;
+  second.bytes.back() = 0xA2;
+  fake.clear_management_history();
+
+  auto first_write = std::async(std::launch::async, [&] {
+    return client.write_app_config(first, AppConfigStorage::Persistent, 500ms);
+  });
+  auto second_write = std::async(std::launch::async, [&] {
+    return client.write_app_config(second, AppConfigStorage::Persistent, 500ms);
+  });
+
+  assert(first_write.get() == VescOperationResult::Success);
+  assert(second_write.get() == VescOperationResult::Success);
+  const auto history = fake.management_history();
+  assert(history == std::vector<std::uint8_t>({
+                        static_cast<std::uint8_t>(VescPacketCommID::GetAppConfig),
+                        static_cast<std::uint8_t>(VescPacketCommID::SetAppConfig),
+                        static_cast<std::uint8_t>(VescPacketCommID::GetAppConfig),
+                        static_cast<std::uint8_t>(VescPacketCommID::SetAppConfig),
+                    }));
+  client.disconnect();
+}
+
+void test_lisp_management() {
+  FakeVesc fake;
+  auto config = config_for(fake);
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+
+  VescClient client(config);
+  assert(client.connect());
+
+  const auto original = client.request_lisp_code(500ms);
+  assert(original && original->bytes.size() == 425);
+  assert(fake.lisp_reads.load() == 3);
+
+  LispCodeImage replacement{std::vector<std::uint8_t>(800, 0x3A)};
+  assert(client.write_lisp_code(replacement, 1s) == VescOperationResult::Success);
+  assert(fake.lisp_erases.load() == 1);
+  assert(fake.lisp_writes.load() == 3);
+  const auto reread = client.request_lisp_code(1s);
+  assert(reread && reread->bytes == replacement.bytes);
+
+  assert(client.set_lisp_running(false, 500ms) == VescOperationResult::Success);
+  assert(client.set_lisp_running(true, 500ms) == VescOperationResult::Success);
+  assert(fake.lisp_run_commands.load() == 2);
+
+  fake.reject_lisp_write.store(true);
+  assert(client.write_lisp_code(replacement, 1s) == VescOperationResult::Rejected);
+  assert(client.write_lisp_code(LispCodeImage{}, 500ms) ==
+         VescOperationResult::InvalidData);
+
+  assert(client.erase_lisp_code(500ms) == VescOperationResult::Success);
+  const auto empty = client.request_lisp_code(500ms);
+  assert(empty && empty->bytes.empty());
+  client.disconnect();
+}
+
+void test_management_timeout_stops_connection() {
+  FakeVesc fake;
+  auto config = config_for(fake);
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+
+  VescClient client(config);
+  assert(client.connect());
+
+  auto& management_mutex = VescClientTestAccess::management_mutex(&client);
+  std::unique_lock held(management_mutex);
+  auto lock_timeout =
+      std::async(std::launch::async, [&client] { return client.request_app_config(30ms); });
+  assert(!lock_timeout.get().has_value());
+  assert(fake.app_config_reads.load() == 0);
+  held.unlock();
+
+  fake.respond_to_management.store(false);
+  assert(!client.request_motor_config(30ms).has_value());
+  wait_until([&] { return !client.is_connected(); }, 250ms,
+             "management timeout did not stop the connection");
+  assert(client.write_app_config(AppConfigImage{{1, 2, 3, 4}}, AppConfigStorage::Persistent,
+                                 50ms) == VescOperationResult::NoReply);
+  client.disconnect();
+}
+
 void test_queued_query_deadline_expires_while_older_query_waits() {
   FakeVesc fake(FakeVesc::Behavior::without_fw_response());
   auto config = config_for(fake);
@@ -1610,6 +1911,10 @@ int main() {
   test_shorter_poll_interval_takes_effect_immediately();
   test_config_snapshot_tracks_runtime_polling_behavior();
   test_concurrent_poll_updates_keep_client_responsive();
+  test_configuration_management_and_polling();
+  test_management_operations_are_serialized();
+  test_lisp_management();
+  test_management_timeout_stops_connection();
   test_queued_query_deadline_expires_while_older_query_waits();
   test_fw_query_recovers_after_timeout_and_late_reply();
   test_disconnect_unblocks_query();

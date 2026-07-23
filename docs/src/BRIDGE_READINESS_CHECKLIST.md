@@ -46,7 +46,16 @@ bridge-v1 behavior.
 | `COMM_SET_HANDBRAKE` | 10 | command | none | deferred / unsupported | not in bridge-v1 scope |
 | `COMM_SET_DETECT` | 11 | command | none | deferred / unsupported | not in bridge-v1 scope |
 | `COMM_SET_SERVO_POS` | 12 | command | `set_servo_pos(...)`, `build_set_servo_pos_command(...)` | supported | `BRIDGE-CTRL-003`, covered by test |
+| `COMM_SET_MCCONF` | 13 | request/ack | `write_motor_config(...)` | supported management surface | covered by test; outside bridge-v1 |
+| `COMM_GET_MCCONF` | 14 | request/response | `request_motor_config(...)` | supported management surface | covered by test; outside bridge-v1 |
+| `COMM_SET_APPCONF` | 16 | request/ack | `write_app_config(..., Persistent, ...)` | supported management surface | covered by test; outside bridge-v1 |
+| `COMM_GET_APPCONF` | 17 | request/response | `request_app_config(...)` | supported management surface | covered by test; outside bridge-v1 |
 | `COMM_GET_IMU_DATA` | 65 | request/response | `build_get_imu_data_request(...)`, `parse_get_imu_data(...)` | supported | `BRIDGE-TEL-001`, covered by test |
+| `COMM_LISP_READ_CODE` | 130 | request/response | `request_lisp_code(...)` | supported management surface | covered by test; outside bridge-v1 |
+| `COMM_LISP_WRITE_CODE` | 131 | request/ack | `write_lisp_code(...)` | supported management surface | covered by test; outside bridge-v1 |
+| `COMM_LISP_ERASE_CODE` | 132 | request/ack | `erase_lisp_code(...)` | supported management surface | covered by test; outside bridge-v1 |
+| `COMM_LISP_SET_RUNNING` | 133 | request/ack | `set_lisp_running(...)` | supported management surface | covered by test; outside bridge-v1 |
+| `COMM_SET_APPCONF_NO_STORE` | 149 | request/ack | `write_app_config(..., Volatile, ...)` | supported management surface | covered by test; outside bridge-v1 |
 
 ## Motor Control
 

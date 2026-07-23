@@ -29,6 +29,14 @@ static_assert(kMaxPayloadBytes <= 0xFFFF,
 constexpr std::size_t kMaxFramedPacketBytes = kMaxPayloadBytes + 6;
 
 /**
+ * @brief Maximum LispBM code image accepted by the client.
+ *
+ * This mirrors the largest current VESC Tool code partition while bounding
+ * aggregate allocation from a controller-supplied length.
+ */
+constexpr std::size_t kMaxLispCodeBytes = (512U * 1024U) - 14U;
+
+/**
  * @brief Packet command IDs used by the supported message set.
  */
 enum class VescPacketCommID : std::uint8_t {
@@ -46,8 +54,26 @@ enum class VescPacketCommID : std::uint8_t {
   SetRpm = 8,
   /** Servo position command. */
   SetServoPos = 12,
+  /** Persist a firmware-native motor configuration. */
+  SetMotorConfig = 13,
+  /** Read the active motor configuration. */
+  GetMotorConfig = 14,
+  /** Persist a firmware-native application configuration. */
+  SetAppConfig = 16,
+  /** Read the active application configuration. */
+  GetAppConfig = 17,
   /** IMU telemetry request/reply. */
   GetImuData = 65,
+  /** Read a chunk of stored LispBM code. */
+  LispReadCode = 130,
+  /** Write a chunk of packed LispBM code. */
+  LispWriteCode = 131,
+  /** Erase stored LispBM code. */
+  LispEraseCode = 132,
+  /** Start or stop LispBM execution. */
+  LispSetRunning = 133,
+  /** Apply an application configuration without persisting it. */
+  SetAppConfigNoStore = 149,
 };
 
 } // namespace goat_vesc

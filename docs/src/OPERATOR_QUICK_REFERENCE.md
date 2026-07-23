@@ -24,8 +24,8 @@ packet framing or serial arbitration themselves.
   samples.
 
 Callbacks run on the I/O thread. Exceptions are contained, but callbacks should
-remain short because they delay transport work; blocking firmware queries return
-no result from that thread. Do not destroy the client from its own callback. A
+remain short because they delay transport work; blocking requests return no
+result from that thread. Do not destroy the client from its own callback. A
 callback already copied for dispatch may run once after its subscription resets.
 
 ## Motor Telemetry
@@ -85,6 +85,22 @@ Runtime adjustment and diagnostic entry points include:
 - `config_snapshot()`
 - `request_fw_version(...)`
 
+## Controller Configuration And LispBM
+
+- `request_motor_config(...)` and `request_app_config(...)` return opaque,
+  firmware-native images.
+- `write_motor_config(...)` persists a motor image.
+- `write_app_config(...)` explicitly selects volatile or persistent storage.
+- `request_lisp_code(...)`, `erase_lisp_code(...)`, and
+  `write_lisp_code(...)` manage stored LispBM source/import bytes.
+- `set_lisp_running(...)` explicitly starts or stops LispBM. Upload leaves it
+  stopped.
+
+Motor and app writes compare the image's embedded schema signature with the
+active controller before sending. A management timeout stops the connection;
+reconnect and reread state before retrying. Persistent writes change controller
+flash and require the same hardware authorization as other real-device changes.
+
 ## `VescConfig` Options
 
 The runtime config object includes:
@@ -99,8 +115,8 @@ The runtime config object includes:
 - `imu_poll_interval`
   IMU polling cadence.
 - `poll_response_timeout`
-  Deadline for a sent periodic poll to receive a reply. Firmware queries use
-  the timeout passed to `request_fw_version(...)`.
+  Deadline for a sent periodic poll to receive a reply. Blocking operations use
+  the timeout supplied to that operation.
 - `query_guard_window`
   Guard band that keeps one-shot queries from cutting too close to due polls.
 - `command_watchdog_timeout`
@@ -118,8 +134,10 @@ The runtime config object includes:
 
 ## Configuration Model
 
-Config is programmatic today. The library does not include a built-in pre-launch
-file loader for YAML, TOML, JSON, or similar formats.
+Host runtime config is programmatic today. The library does not include a file
+loader or interpret VESC configuration fields. Controller images are
+firmware-specific binary data intended for a version-aware consuming
+application.
 
 The expected pattern today is:
 

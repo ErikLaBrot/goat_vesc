@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace goat_vesc {
 
@@ -22,6 +23,54 @@ enum class ControlWatchdogAction {
   Coast,
   /** Send a bounded brake-current command when the watchdog expires. */
   BrakeCurrent,
+};
+
+/**
+ * @brief Result of a reply-bearing operation that changes controller state.
+ */
+enum class VescOperationResult {
+  /** The controller accepted the operation. */
+  Success,
+  /** The supplied image or request parameters are invalid. */
+  InvalidData,
+  /** The image schema signature does not match the connected controller. */
+  IncompatibleData,
+  /** The operation could not obtain a reply before disconnect or deadline. */
+  NoReply,
+  /** The controller returned a negative or malformed acknowledgement. */
+  Rejected,
+};
+
+/**
+ * @brief Storage behavior for a full application configuration write.
+ */
+enum class AppConfigStorage {
+  /** Apply the configuration until reset without writing it to flash. */
+  Volatile,
+  /** Apply the configuration and persist it to flash. */
+  Persistent,
+};
+
+/** @brief Firmware-native serialized motor configuration. */
+struct MotorConfigImage {
+  /** Serialized bytes beginning with the firmware schema signature. */
+  std::vector<std::uint8_t> bytes;
+};
+
+/** @brief Firmware-native serialized application configuration. */
+struct AppConfigImage {
+  /** Serialized bytes beginning with the firmware schema signature. */
+  std::vector<std::uint8_t> bytes;
+};
+
+/**
+ * @brief LispBM source and embedded-import bytes exposed by the firmware.
+ *
+ * Firmware storage headers, CRC, and flags are added when the image is written.
+ */
+struct LispCodeImage {
+  /** Source and embedded-import bytes without the flash header or flags. */
+  std::vector<std::uint8_t> bytes;
 };
 
 /**
