@@ -2,7 +2,7 @@
   "version": 3,
   "cmakeMinimumRequired": {
     "major": 3,
-    "minor": 16,
+    "minor": 21,
     "patch": 0
   },
   "configurePresets": [
@@ -11,7 +11,7 @@
       "hidden": true,
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
-        "GOAT_VESC_BUILD_TESTS": "ON",
+        "BUILD_TESTING": "ON",
         "GOAT_VESC_BUILD_EXAMPLES": "ON"
       }
     },

@@ -20,6 +20,10 @@ namespace goat_vesc {
  * `VescProtocol` sits above packet framing primitives and below the transport
  * owner. It knows how to encode and decode the message layouts used by the
  * current public client API.
+ *
+ * Control builders return an empty packet when a floating-point command is
+ * non-finite, outside its documented normalized range, or not representable on
+ * the wire.
  */
 class VescProtocol {
 public:
@@ -49,7 +53,7 @@ public:
   static Payload build_set_rpm_command(std::int32_t rpm);
   /**
    * @brief Builds a `COMM_SET_DUTY` command packet.
-   * @param duty Duty-cycle request, typically in the `[-1.0, 1.0]` range.
+   * @param duty Duty-cycle request in the `[-1.0, 1.0]` range.
    * @return Fully framed packet ready to write to the transport.
    */
   static Payload build_set_duty_command(float duty);
@@ -61,13 +65,13 @@ public:
   static Payload build_set_current_command(float amps);
   /**
    * @brief Builds a `COMM_SET_CURRENT_BRAKE` command packet.
-   * @param amps Active brake-current magnitude in amps.
+   * @param amps Signed brake-current command in amps.
    * @return Fully framed packet ready to write to the transport.
    */
   static Payload build_set_current_brake_command(float amps);
   /**
    * @brief Builds a `COMM_SET_SERVO_POS` command packet.
-   * @param position Servo position in controller-specific normalized units.
+   * @param position Servo position in the `[0.0, 1.0]` range.
    * @return Fully framed packet ready to write to the transport.
    */
   static Payload build_set_servo_pos_command(float position);

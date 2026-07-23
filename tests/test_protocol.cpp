@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <numeric>
 #include <vector>
 
@@ -117,6 +118,19 @@ void test_build_control_commands_exact_bytes() {
 
   assert((VescProtocol::build_set_servo_pos_command(0.5f) ==
           std::vector<std::uint8_t>{0x02, 0x03, 0x0C, 0x01, 0xF4, 0xE9, 0xCB, 0x03}));
+}
+
+void test_control_builders_reject_invalid_floats() {
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float infinity = std::numeric_limits<float>::infinity();
+  const float largest = std::numeric_limits<float>::max();
+
+  assert(VescProtocol::build_set_duty_command(nan).empty());
+  assert(VescProtocol::build_set_duty_command(1.01f).empty());
+  assert(VescProtocol::build_set_current_command(infinity).empty());
+  assert(VescProtocol::build_set_current_brake_command(largest).empty());
+  assert(VescProtocol::build_set_servo_pos_command(-0.01f).empty());
+  assert(VescProtocol::build_set_servo_pos_command(nan).empty());
 }
 
 void test_parse_fw_version() {
@@ -252,6 +266,33 @@ void test_packet_parser_short_frame_incremental_delivery() {
   assert(*parsed == expected_payload);
 }
 
+void test_packet_parser_waits_for_outer_frame_with_nested_frame_bytes() {
+  const auto nested = VescProtocol::build_fw_version_request();
+  auto outer_payload = bytes({0x42});
+  outer_payload.insert(outer_payload.end(), nested.begin(), nested.end());
+  outer_payload.push_back(0x43);
+  const auto outer = frame_payload(outer_payload);
+
+  const auto expect_outer = [&](VescPacketParser& parser) {
+    const std::vector<std::uint8_t> without_outer_trailer(outer.begin(), outer.end() - 3);
+    assert(parser.feed_bytes(without_outer_trailer).empty());
+
+    const std::vector<std::uint8_t> outer_trailer(outer.end() - 3, outer.end());
+    const auto payloads = parser.feed_bytes(outer_trailer);
+    assert(payloads.size() == 1);
+    assert(payloads.front() == outer_payload);
+  };
+
+  VescPacketParser fresh_parser;
+  expect_outer(fresh_parser);
+
+  VescPacketParser parser_after_error;
+  auto invalid = frame_payload(bytes({0xA0}));
+  invalid[invalid.size() - 2] ^= 0x01;
+  assert(parser_after_error.feed_bytes(invalid).empty());
+  expect_outer(parser_after_error);
+}
+
 void test_packet_parser_emits_multiple_frames_from_one_burst() {
   VescPacketParser parser;
   const auto first_payload = bytes({0x01});
@@ -323,6 +364,18 @@ void test_packet_parser_resyncs_after_bad_stop_byte() {
   assert(payloads.front() == expected_payload);
 }
 
+void test_packet_parser_resyncs_after_corrupt_length() {
+  VescPacketParser parser;
+  const auto valid = VescProtocol::build_fw_version_request();
+  // Length bytes are not escaped, so a corrupt length can consume later frames
+  // within one declared candidate. A following frame restores synchronization.
+  const auto payloads =
+      parser.feed_bytes(concat_bytes({bytes({0x02, 0x03, 0xAA}), valid, valid}));
+
+  assert(payloads.size() == 1);
+  assert(payloads.front() == bytes({static_cast<std::uint8_t>(VescPacketCommID::FwVersion)}));
+}
+
 void test_packet_parser_reset_clears_partial_frame_state() {
   VescPacketParser parser;
   const auto expected_payload = bytes({0x21, 0x22});
@@ -372,7 +425,7 @@ void test_packet_parser_rejects_invalid_medium_frame_lengths() {
       parser.feed_bytes(make_long16_header(static_cast<std::uint16_t>(kMaxPayloadBytes + 1U)));
   assert(payloads.empty());
 
-  payloads = parser.feed_bytes(valid_short_frame);
+  payloads = parser.feed_bytes(concat_bytes({valid_short_frame, valid_short_frame}));
   assert(payloads.size() == 1);
   assert(payloads.front() == expected_payload);
 }
@@ -424,17 +477,20 @@ void test_packet_parser_rejects_invalid_frames() {
 int main() {
   test_build_requests_exact_bytes();
   test_build_control_commands_exact_bytes();
+  test_control_builders_reject_invalid_floats();
   test_parse_fw_version();
   test_parse_get_values();
   test_parse_get_imu_data_full_mask();
   test_parse_get_imu_data_sparse_mask_and_rejections();
   test_packet_parser_round_trip_and_resync();
   test_packet_parser_short_frame_incremental_delivery();
+  test_packet_parser_waits_for_outer_frame_with_nested_frame_bytes();
   test_packet_parser_emits_multiple_frames_from_one_burst();
   test_packet_parser_resyncs_after_garbage_prefix();
   test_packet_parser_frame_boundaries();
   test_packet_parser_resyncs_after_bad_crc();
   test_packet_parser_resyncs_after_bad_stop_byte();
+  test_packet_parser_resyncs_after_corrupt_length();
   test_packet_parser_reset_clears_partial_frame_state();
   test_packet_parser_rejects_invalid_medium_frame_lengths();
   test_packet_parser_resyncs_after_unsupported_24bit_sequences();

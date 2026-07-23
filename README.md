@@ -21,7 +21,7 @@ adapter layer that consumes this installed package.
 
 | Area | Requirement | Notes |
 |---|---|---|
-| Build system | CMake 3.16 or newer | See [`CMakeLists.txt`](CMakeLists.txt). |
+| Build system | CMake 3.21 or newer | See [`CMakeLists.txt`](CMakeLists.txt). |
 | Compiler | C++17 compiler | |
 | Target platform | Jetson Orin Nano running ARM Linux | |
 | Hardware / transport | GOAT racer VESC hardware reachable over the expected serial device path | |
@@ -54,9 +54,9 @@ One simple local install flow is:
 
 ```bash
 cmake -S . -B build/install-export \
-  -DGOAT_VESC_BUILD_TESTS=OFF \
+  -DBUILD_TESTING=OFF \
   -DGOAT_VESC_BUILD_EXAMPLES=OFF \
-  -DCMAKE_INSTALL_PREFIX="$PWD/install/goat_vesc"
+  -DCMAKE_INSTALL_PREFIX="$PWD/build/install/goat_vesc"
 cmake --build build/install-export
 cmake --install build/install-export
 ```

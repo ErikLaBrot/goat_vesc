@@ -79,12 +79,12 @@ bridge-v1 behavior.
 
 | ID | Requirement | Rationale | Priority | Status | Evidence |
 |---|---|---|---|---|---|
-| BRIDGE-REL-001 | The library shall cleanly shut down after async transport failure without leaving a joinable thread or leaked transport state. | Transport faults must not terminate the process or leave broken client state behind. | must have | covered | test |
-| BRIDGE-REL-002 | Subscription lifetime handling shall remain safe if subscription handles outlive client shutdown. | Bridge code should not trigger use-after-free by normal teardown ordering. | must have | covered | test |
+| BRIDGE-REL-001 | Concurrent lifecycle calls and async transport failure shall cleanly stop without leaving a joinable thread or leaked transport state. | Transport and lifecycle races must not terminate the process or leave broken client state behind. | must have | covered | test |
+| BRIDGE-REL-002 | Subscription lifetime and callback failure handling shall remain safe through shutdown and reentrant stop requests. | Bridge callbacks must not terminate or deadlock the transport thread. | must have | covered | test |
 | BRIDGE-REL-003 | Disconnect shall not hang if the transport thread is blocked waiting for write readiness. | The bridge must be able to stop promptly even under bad transport conditions. | must have | covered | test |
 | BRIDGE-REL-004 | Poll timeouts shall recover without permanently stalling IMU or motor telemetry. | Temporary missed replies should not kill telemetry flow. | must have | covered | test |
-| BRIDGE-REL-005 | Blocking query deadlines shall be honored, and stale late replies shall not satisfy a newer request. | Bridge diagnostics must not return misleading results after timing faults. | must have | covered | test |
-| BRIDGE-REL-006 | Command submission results shall truthfully reflect whether a command can still be delivered during disconnect races. | Bridge control logic needs accurate command-send outcomes. | must have | covered | test |
+| BRIDGE-REL-005 | Blocking query deadlines shall be honored and later firmware queries shall recover after a timeout. | Firmware diagnostics must not become permanently unavailable after a missed reply. | must have | covered | test |
+| BRIDGE-REL-006 | Command and query submission shall remain truthful during disconnect races; pending control commands shall retain only the latest value per command ID and be discarded when the watchdog fires. | Bridge control needs bounded stale work and accurate submission outcomes. | must have | covered | test |
 | BRIDGE-REL-007 | Sanitizer-enabled builds should run across the library, examples, and tests. | Sanitizers are a practical reliability gate for transport and lifetime bugs. | should have later | covered | build + test |
 
 ## Coverage Policy

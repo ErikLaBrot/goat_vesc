@@ -35,7 +35,6 @@ if(GOAT_VESC_ENABLE_CPPCHECK)
     --check-level=exhaustive
     --std=c++17
     --quiet
-    --suppress=assertWithSideEffect
     --suppress=missingIncludeSystem
   )
   if(GOAT_VESC_ENABLE_WERROR)

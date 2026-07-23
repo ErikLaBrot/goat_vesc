@@ -1,11 +1,11 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.21)
 project(goat_vesc VERSION 0.1.0 LANGUAGES CXX)
 
 include(CTest)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+find_package(Threads REQUIRED)
 
-option(GOAT_VESC_BUILD_TESTS "Build tests" ON)
 option(GOAT_VESC_BUILD_EXAMPLES "Build examples" ON)
 option(GOAT_VESC_ENABLE_CLANG_TIDY "Enable clang-tidy" OFF)
 option(GOAT_VESC_ENABLE_CPPCHECK "Enable cppcheck" OFF)
@@ -18,8 +18,6 @@ option(GOAT_VESC_BUILD_DOCS "Enable API documentation target when Doxygen is ava
 include(cmake/StaticAnalysis.cmake)
 include(cmake/Sanitizers.cmake)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -34,22 +32,23 @@ target_include_directories(goat_vesc
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-  PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+target_compile_features(goat_vesc PUBLIC cxx_std_17)
+target_link_libraries(goat_vesc PUBLIC Threads::Threads)
 
 goat_vesc_enable_warnings(goat_vesc)
 goat_vesc_enable_sanitizers(goat_vesc)
 
 if(GOAT_VESC_BUILD_EXAMPLES)
-  foreach(example IN ITEMS vesc_probe vesc_duty_sweep vesc_servo_sweep vesc_hardware_smoke)
+  foreach(example IN ITEMS vesc_probe vesc_hardware_smoke)
     add_executable(${example} examples/${example}.cpp)
     target_link_libraries(${example} PRIVATE goat_vesc)
+    goat_vesc_enable_warnings(${example})
     goat_vesc_enable_sanitizers(${example})
   endforeach()
 endif()
 
-if(GOAT_VESC_BUILD_TESTS)
+if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
 
@@ -76,7 +75,7 @@ configure_package_config_file(
 write_basic_package_version_file(
   ${CMAKE_CURRENT_BINARY_DIR}/goat_vescConfigVersion.cmake
   VERSION ${PROJECT_VERSION}
-  COMPATIBILITY SameMajorVersion
+  COMPATIBILITY SameMinorVersion
 )
 
 install(EXPORT goat_vescTargets

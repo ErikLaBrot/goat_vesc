@@ -1,7 +1,6 @@
 #include "goat_vesc/packet_parser.hpp"
 #include "goat_vesc/protocol_ids.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -24,25 +23,34 @@ void VescPacketParser::reset() {
 std::optional<VescPacketParser::Payload> VescPacketParser::feed_byte(std::uint8_t byte) {
   buffer_.push_back(byte);
 
-  Payload payload;
   for (;;) {
-    std::size_t discard_bytes = 0;
-    const auto result = try_decode_packet_(payload, discard_bytes);
-
-    if (result == DecodeResult::Success) {
-      return payload;
+    while (!buffer_.empty() && buffer_.front() != kStartShort &&
+           buffer_.front() != kStartLong16) {
+      buffer_.erase(buffer_.begin());
+    }
+    if (buffer_.empty()) {
+      return std::nullopt;
     }
 
+    Payload payload;
+    std::size_t packet_size = 0;
+    const auto result = try_decode_packet_(payload, packet_size);
+    if (result == DecodeResult::Success) {
+      buffer_.erase(buffer_.begin(),
+                    buffer_.begin() + static_cast<std::ptrdiff_t>(packet_size));
+      return payload;
+    }
     if (result == DecodeResult::NeedMoreData) {
       return std::nullopt;
     }
 
-    // Invalid: drop one byte and try to resync
-    if (!buffer_.empty()) {
-      const auto discard_end =
-          buffer_.begin() + static_cast<std::ptrdiff_t>(std::min(discard_bytes, buffer_.size()));
-      buffer_.erase(buffer_.begin(), discard_end);
+    if (result == DecodeResult::InvalidHeader) {
+      buffer_.erase(buffer_.begin());
     } else {
+      buffer_.erase(buffer_.begin(),
+                    buffer_.begin() + static_cast<std::ptrdiff_t>(packet_size));
+    }
+    if (buffer_.empty()) {
       return std::nullopt;
     }
   }
@@ -63,14 +71,13 @@ VescPacketParser::feed_bytes(const std::vector<std::uint8_t>& bytes) {
 }
 
 VescPacketParser::DecodeResult
-VescPacketParser::try_decode_packet_(Payload& payload_out, std::size_t& discard_bytes_out) {
-  discard_bytes_out = 0;
-
-  if (buffer_.empty()) {
+VescPacketParser::try_decode_packet_(Payload& payload_out, std::size_t& packet_size_out) const {
+  const std::size_t available = buffer_.size();
+  if (available == 0) {
     return DecodeResult::NeedMoreData;
   }
 
-  const std::uint8_t start = buffer_[0];
+  const std::uint8_t start = buffer_.front();
 
   std::size_t header_len = 0;
   std::size_t payload_len = 0;
@@ -78,45 +85,46 @@ VescPacketParser::try_decode_packet_(Payload& payload_out, std::size_t& discard_
   if (start == kStartShort) {
     header_len = 2;
 
-    if (buffer_.size() < header_len) {
+    if (available < header_len) {
       return DecodeResult::NeedMoreData;
     }
 
+    packet_size_out = header_len;
     payload_len = buffer_[1];
 
     // VESC rejects zero-length packets
     if (payload_len < 1) {
-      discard_bytes_out = header_len;
-      return DecodeResult::Invalid;
+      return DecodeResult::InvalidHeader;
     }
 
   } else if (start == kStartLong16) {
     header_len = 3;
 
-    if (buffer_.size() < header_len) {
+    if (available < header_len) {
       return DecodeResult::NeedMoreData;
     }
 
+    packet_size_out = header_len;
     payload_len =
         (static_cast<std::size_t>(buffer_[1]) << 8) | static_cast<std::size_t>(buffer_[2]);
 
     // Shorter packets should have used the short format
     if (payload_len <= 255 || payload_len > kMaxPayloadBytes) {
-      discard_bytes_out = header_len;
-      return DecodeResult::Invalid;
+      return DecodeResult::InvalidHeader;
     }
 
   } else {
     // With the current 512-byte payload ceiling, 0x04 is not a supported frame
     // start byte. Drop it like any other unsupported prefix so the parser can
     // resync on the next byte.
-    discard_bytes_out = 1;
-    return DecodeResult::Invalid;
+    packet_size_out = 1;
+    return DecodeResult::InvalidHeader;
   }
 
   const std::size_t total_len = header_len + payload_len + 2 + 1; // payload + crc + stop
+  packet_size_out = total_len;
 
-  if (buffer_.size() < total_len) {
+  if (available < total_len) {
     return DecodeResult::NeedMoreData;
   }
 
@@ -126,8 +134,7 @@ VescPacketParser::try_decode_packet_(Payload& payload_out, std::size_t& discard_
   const std::size_t stop_index = payload_start + payload_len + 2;
 
   if (buffer_[stop_index] != kStopByte) {
-    discard_bytes_out = total_len;
-    return DecodeResult::Invalid;
+    return DecodeResult::InvalidPacket;
   }
 
   Payload payload(buffer_.begin() + static_cast<std::ptrdiff_t>(payload_start),
@@ -140,11 +147,8 @@ VescPacketParser::try_decode_packet_(Payload& payload_out, std::size_t& discard_
   const std::uint16_t crc_calc = crc16ccitt_(payload);
 
   if (crc_rx != crc_calc) {
-    discard_bytes_out = total_len;
-    return DecodeResult::Invalid;
+    return DecodeResult::InvalidPacket;
   }
-
-  buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(total_len));
 
   payload_out = std::move(payload);
   return DecodeResult::Success;

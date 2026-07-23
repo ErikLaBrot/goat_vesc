@@ -23,6 +23,11 @@ packet framing or serial arbitration themselves.
 - `subscribe_motor_state(...)`: Register a callback for fresh motor-state
   samples.
 
+Callbacks run on the I/O thread. Exceptions are contained, but callbacks should
+remain short because they delay transport work; blocking firmware queries return
+no result from that thread. Do not destroy the client from its own callback. A
+callback already copied for dispatch may run once after its subscription resets.
+
 ## Motor Telemetry
 
 `VescMotorState` currently exposes:
@@ -94,7 +99,8 @@ The runtime config object includes:
 - `imu_poll_interval`
   IMU polling cadence.
 - `poll_response_timeout`
-  Deadline for a sent poll or query to receive a reply.
+  Deadline for a sent periodic poll to receive a reply. Firmware queries use
+  the timeout passed to `request_fw_version(...)`.
 - `query_guard_window`
   Guard band that keeps one-shot queries from cutting too close to due polls.
 - `command_watchdog_timeout`
@@ -127,12 +133,16 @@ Built examples:
 
 - `vesc_probe`
   Connect, query firmware, and verify IMU plus motor telemetry.
-- `vesc_duty_sweep`
-  Manual duty-cycle sweep against real hardware.
-- `vesc_servo_sweep`
-  Manual servo sweep against real hardware.
 - `vesc_hardware_smoke`
-  Runs telemetry polling, live subscriptions, concurrent command streaming, and
-  a firmware query under load in one operator-facing hardware smoke pass.
+  Runs telemetry polling, live subscriptions, explicitly armed command phases,
+  and a firmware query under load in one operator-facing hardware smoke pass.
 
 Build the requested target first, then invoke its binary from `build/default/`.
+Actuating validation requires an explicit target and arming flag:
+
+```bash
+build/default/vesc_hardware_smoke --device /dev/ttyACM0 --arm-actuators
+```
+
+Final neutral commands are best effort. VESC-side timeout and hardware limits
+remain the failure backstop.

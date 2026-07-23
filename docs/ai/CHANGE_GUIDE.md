@@ -52,5 +52,5 @@ controller.
 Do not run examples against a VESC unless the user explicitly
 authorizes hardware access and identifies the target. Treat actuator arming as
 a separate consequential action requiring explicit authorization. Start with
-the non-actuating probe when that is sufficient; use sweeps or the smoke tool's
-actuator mode only when the requested validation requires motion.
+the non-actuating probe when that is sufficient; use the smoke tool's actuator
+mode only when the requested validation requires motion.

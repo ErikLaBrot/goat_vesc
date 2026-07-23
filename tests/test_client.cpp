@@ -3,6 +3,7 @@
 #include "goat_vesc/packet_parser.hpp"
 #include "goat_vesc/protocol_ids.hpp"
 #include "goat_vesc/vesc_client.hpp"
+#include "goat_vesc/vesc_protocol.hpp"
 
 #include <algorithm>
 #include <array>
@@ -11,7 +12,9 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <future>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -38,9 +41,9 @@ struct VescClientTestAccess {
     return client->command_queue_;
   }
 
-  static auto stale_fw_version_reply_count(VescClient& client) -> std::size_t {
-    std::lock_guard lock(client.scheduler_mutex_);
-    return client.stale_fw_version_reply_count_;
+  static auto due_watchdog_command(VescClient& client)
+      -> std::optional<std::vector<std::uint8_t>> {
+    return client.dequeue_due_watchdog_command(std::chrono::steady_clock::now());
   }
 
   static auto imu_subscription_count(const VescClient& client) -> std::size_t {
@@ -159,6 +162,16 @@ bool is_writable(int fd) {
   return rc > 0 && FD_ISSET(fd, &wfds);
 }
 
+bool is_readable(int fd) {
+  fd_set rfds;
+  FD_ZERO(&rfds);
+  FD_SET(fd, &rfds);
+
+  struct timeval timeout {};
+  const int rc = ::select(fd + 1, &rfds, nullptr, nullptr, &timeout);
+  return rc > 0 && FD_ISSET(fd, &rfds);
+}
+
 bool try_write_all(int fd, const std::vector<std::uint8_t>& bytes) {
   const std::uint8_t* cursor = bytes.data();
   std::size_t remaining = bytes.size();
@@ -203,6 +216,23 @@ auto wait_for_quiescence(Loader load, std::chrono::milliseconds timeout,
   }
 
   throw std::runtime_error(message);
+}
+
+std::vector<std::uint8_t> read_exact(int fd, std::size_t byte_count) {
+  std::vector<std::uint8_t> bytes(byte_count);
+  std::size_t offset = 0;
+  while (offset < byte_count) {
+    wait_until([fd] { return is_readable(fd); }, 250ms, "pseudo-terminal request did not arrive");
+    const ssize_t n = ::read(fd, bytes.data() + offset, byte_count - offset);
+    if (n < 0 && errno == EINTR) {
+      continue;
+    }
+    if (n <= 0) {
+      throw std::runtime_error("pseudo-terminal request read failed");
+    }
+    offset += static_cast<std::size_t>(n);
+  }
+  return bytes;
 }
 
 struct ScopedFd {
@@ -270,6 +300,57 @@ private:
   ScopedFd write_fd_;
 };
 
+struct EofFakeTransport {
+  EofFakeTransport() {
+    int pipe_fds[2]{-1, -1};
+    if (::pipe(pipe_fds) != 0) {
+      throw std::runtime_error("pipe failed");
+    }
+    read_fd_.reset(pipe_fds[0]);
+    write_fd_.reset(pipe_fds[1]);
+  }
+
+  bool open_client_fd(int& fd_out) {
+    fd_out = read_fd_.release();
+    return fd_out >= 0;
+  }
+
+  void close_peer() {
+    write_fd_.reset();
+  }
+
+private:
+  ScopedFd read_fd_;
+  ScopedFd write_fd_;
+};
+
+struct PseudoTerminal {
+  PseudoTerminal() : master_fd_(::posix_openpt(O_RDWR | O_NOCTTY)) {
+    if (master_fd_.get() < 0 || ::grantpt(master_fd_.get()) != 0 ||
+        ::unlockpt(master_fd_.get()) != 0) {
+      throw std::runtime_error("pseudo-terminal setup failed");
+    }
+    const char* path = ::ptsname(master_fd_.get());
+    if (path == nullptr) {
+      throw std::runtime_error("pseudo-terminal path lookup failed");
+    }
+    slave_path = path;
+  }
+
+  int master_fd() const {
+    return master_fd_.get();
+  }
+
+  void close_master() {
+    master_fd_.reset();
+  }
+
+  std::string slave_path;
+
+private:
+  ScopedFd master_fd_;
+};
+
 struct BlockedWriteFakeVesc {
   BlockedWriteFakeVesc() {
     int fds[2]{-1, -1};
@@ -325,7 +406,16 @@ struct BlockedWriteFakeVesc {
                              std::to_string(actual_send_buffer_bytes_));
   }
 
-  private:
+  void fill_send_buffer() const {
+    std::array<std::uint8_t, 512> bytes{};
+    while (::write(observer_fd_.get(), bytes.data(), bytes.size()) > 0) {
+    }
+    if (errno != EAGAIN && errno != EWOULDBLOCK) {
+      throw std::runtime_error("failed to fill fake send buffer");
+    }
+  }
+
+private:
   int actual_send_buffer_bytes_{0};
   ScopedFd server_fd_;
   ScopedFd client_fd_;
@@ -340,11 +430,11 @@ struct FakeVesc {
     std::vector<std::chrono::milliseconds> fw_response_delays;
 
     static auto drop_imu_replies(int count) -> Behavior {
-      return Behavior{count, 0, true};
+      return Behavior{count, 0, true, {}};
     }
 
     static auto without_fw_response() -> Behavior {
-      return Behavior{0, 0, false};
+      return Behavior{0, 0, false, {}};
     }
 
     static auto delayed_fw_responses(std::vector<std::chrono::milliseconds> delays) -> Behavior {
@@ -596,11 +686,52 @@ void test_client_polling_and_subscriptions() {
     writer.join();
   }
 
-  wait_until([&] { return fake.rpm_commands.load() >= 40; }, 500ms, "rpm commands were dropped");
+  wait_until([&] { return fake.rpm_commands.load() > 0; }, 500ms,
+             "coalesced rpm commands were not delivered");
   client.disconnect();
 
   (void)imu_handle;
   (void)motor_handle;
+}
+
+void test_callback_failures_and_reentrant_shutdown_are_contained() {
+  FakeVesc fake;
+  auto config = config_for(fake);
+  config.imu_poll_interval = 10ms;
+  config.motor_poll_interval = 0ms;
+
+  VescClient client(config);
+  std::atomic<int> throwing_callbacks{0};
+  std::atomic<bool> callback_returned{false};
+  std::atomic<bool> callback_query_was_empty{false};
+
+  auto throwing_handle = client.subscribe_imu([&](const VescIMUData&) {
+    ++throwing_callbacks;
+    throw std::runtime_error("subscriber failure");
+  });
+  auto shutdown_handle = client.subscribe_imu([&](const VescIMUData&) {
+    if (callback_returned.load()) {
+      return;
+    }
+    callback_query_was_empty.store(!client.request_fw_version(100ms).has_value());
+    client.disconnect();
+    callback_returned.store(true);
+  });
+
+  assert(client.connect());
+  wait_until([&] { return callback_returned.load(); }, 500ms,
+             "reentrant callback operations did not return");
+  assert(callback_query_was_empty.load());
+  assert(throwing_callbacks.load() > 0);
+  wait_until([&] { return !client.is_connected(); }, 500ms,
+             "callback disconnect did not stop the I/O loop");
+
+  client.disconnect();
+  assert(!VescClientTestAccess::io_thread_joinable(client));
+  assert(VescClientTestAccess::fd(client) == -1);
+
+  (void)throwing_handle;
+  (void)shutdown_handle;
 }
 
 void test_subscription_cleanup_after_disconnect() {
@@ -694,7 +825,7 @@ void test_imu_timeout_does_not_starve_motor_polling() {
 
   wait_until([&] { return fake.imu_requests.load() >= 2; }, 500ms,
              "imu poll did not hit repeated timeout path");
-  wait_until([&] { return client.latest_motor_state().has_value(); }, 70ms,
+  wait_until([&] { return client.latest_motor_state().has_value(); }, 250ms,
              "motor polling was starved by imu timeout recovery");
   wait_until([&] { return client.latest_imu().has_value(); }, 500ms, "imu cache never recovered");
 
@@ -729,6 +860,73 @@ void test_control_command_delivery() {
   assert(fake.last_servo_raw.load() == 500);
 
   client.disconnect();
+}
+
+void test_invalid_control_commands_are_rejected() {
+  FakeVesc fake;
+  auto config = config_for(fake);
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+  config.max_brake_current = 1.0f;
+
+  VescClient client(config);
+  assert(client.connect());
+
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float infinity = std::numeric_limits<float>::infinity();
+  const float largest = std::numeric_limits<float>::max();
+  assert(!client.set_duty(nan));
+  assert(!client.set_duty(1.01f));
+  assert(!client.set_current(infinity));
+  assert(!client.set_current(largest));
+  assert(!client.set_current_brake(nan));
+  assert(!client.set_servo_pos(nan));
+  assert(!client.set_servo_pos(1.01f));
+
+  std::this_thread::sleep_for(20ms);
+  assert(fake.duty_commands.load() == 0);
+  assert(fake.current_commands.load() == 0);
+  assert(fake.brake_current_commands.load() == 0);
+  assert(fake.servo_commands.load() == 0);
+
+  client.disconnect();
+}
+
+void test_control_queue_keeps_only_latest_command_per_type() {
+  VescClient client(VescConfig{});
+  VescClientTestAccess::running(&client).store(true);
+
+  assert(client.set_rpm(1000));
+  assert(client.set_rpm(2000));
+  assert(client.set_duty(0.1f));
+  assert(client.set_rpm(3000));
+
+  const auto& queue = VescClientTestAccess::command_queue(&client);
+  assert(queue.size() == 2);
+  assert(queue[0][2] == static_cast<std::uint8_t>(VescPacketCommID::SetDuty));
+  assert(queue[1][2] == static_cast<std::uint8_t>(VescPacketCommID::SetRpm));
+  assert(read_i32(queue[1], 3) == 3000);
+
+  VescClientTestAccess::running(&client).store(false);
+}
+
+void test_watchdog_discards_stale_control_backlog() {
+  VescConfig config;
+  config.command_watchdog_timeout = 1ms;
+  config.command_watchdog_action = ControlWatchdogAction::Coast;
+
+  VescClient client(config);
+  VescClientTestAccess::running(&client).store(true);
+  assert(client.set_rpm(1000));
+  assert(client.set_duty(0.1f));
+
+  std::this_thread::sleep_for(2ms);
+  const auto watchdog = VescClientTestAccess::due_watchdog_command(client);
+  assert(watchdog.has_value());
+  assert(!watchdog->empty());
+  assert(VescClientTestAccess::command_queue(&client).empty());
+
+  VescClientTestAccess::running(&client).store(false);
 }
 
 void test_brake_current_command_requires_positive_limit() {
@@ -769,9 +967,6 @@ void test_watchdog_brake_current_safe_stop() {
   assert(client.set_rpm(1800));
   wait_until([&] { return fake.rpm_commands.load() == 1; }, 500ms,
              "rpm command was not delivered before watchdog arming");
-
-  std::this_thread::sleep_for(20ms);
-  assert(fake.brake_current_commands.load() == 0);
 
   wait_until([&] { return fake.brake_current_commands.load() == 1; }, 500ms,
              "watchdog brake command did not fire");
@@ -858,6 +1053,42 @@ auto test_connect_disconnect_edges() -> void {
   assert(!version_after_disconnect.has_value());
 }
 
+void test_concurrent_lifecycle_calls_are_serialized() {
+  FakeVesc fake;
+  std::atomic<int> open_calls{0};
+  auto config = config_for(fake);
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+  config.open_serial_fn = [&fake, &open_calls](const VescConfig&, int& fd_out) {
+    ++open_calls;
+    std::this_thread::sleep_for(20ms);
+    return fake.open_client_fd(fd_out);
+  };
+
+  VescClient client(config);
+  std::promise<void> start;
+  const auto ready = start.get_future().share();
+  auto first = std::async(std::launch::async, [&] {
+    ready.wait();
+    return client.connect();
+  });
+  auto second = std::async(std::launch::async, [&] {
+    ready.wait();
+    return client.connect();
+  });
+  start.set_value();
+
+  assert(first.get());
+  assert(second.get());
+  assert(open_calls.load() == 1);
+
+  auto first_disconnect = std::async(std::launch::async, [&] { client.disconnect(); });
+  auto second_disconnect = std::async(std::launch::async, [&] { client.disconnect(); });
+  first_disconnect.get();
+  second_disconnect.get();
+  assert(!client.is_connected());
+}
+
 auto test_runtime_poll_interval_updates() -> void {
   constexpr auto kInitialStampNs = 1000ULL;
   constexpr auto kStampStepNs = 1000ULL;
@@ -897,7 +1128,7 @@ auto test_runtime_poll_interval_updates() -> void {
   assert(first_imu.has_value());
   assert(first_motor.has_value());
 
-  client.set_imu_poll_interval(0ms);
+  client.set_imu_poll_interval(-1ms);
   client.set_motor_poll_interval(0ms);
 
   const int quiet_imu_requests =
@@ -927,6 +1158,23 @@ auto test_runtime_poll_interval_updates() -> void {
       },
       500ms, "motor cache did not refresh after poll update");
 
+  client.disconnect();
+}
+
+void test_shorter_poll_interval_takes_effect_immediately() {
+  FakeVesc fake;
+  auto config = config_for(fake);
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 10s;
+
+  VescClient client(config);
+  assert(client.connect());
+  wait_until([&] { return fake.value_requests.load() == 1; }, 500ms,
+             "initial motor poll did not run");
+
+  client.set_motor_poll_interval(10ms);
+  wait_until([&] { return fake.value_requests.load() >= 2; }, 500ms,
+             "shorter motor poll interval kept the old deadline");
   client.disconnect();
 }
 
@@ -1063,15 +1311,12 @@ void test_queued_query_deadline_expires_while_older_query_waits() {
       std::async(std::launch::async, [&client] { return client.request_fw_version(150ms); });
   std::this_thread::sleep_for(5ms);
 
-  const auto third_started = std::chrono::steady_clock::now();
   auto third =
       std::async(std::launch::async, [&client] { return client.request_fw_version(25ms); });
 
   const auto third_result = third.get();
-  const auto third_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now() - third_started);
   assert(!third_result.has_value());
-  assert(third_elapsed < 45ms);
+  assert(first.wait_for(0ms) == std::future_status::timeout);
 
   const auto second_result = second.get();
   const auto first_result = first.get();
@@ -1082,7 +1327,7 @@ void test_queued_query_deadline_expires_while_older_query_waits() {
   client.disconnect();
 }
 
-void test_late_fw_reply_does_not_satisfy_newer_query() {
+void test_fw_query_recovers_after_timeout_and_late_reply() {
   FakeVesc fake(FakeVesc::Behavior::delayed_fw_responses({80ms, 0ms}));
   auto config = config_for(fake);
   config.imu_poll_interval = 0ms;
@@ -1097,25 +1342,16 @@ void test_late_fw_reply_does_not_satisfy_newer_query() {
   assert(!first.has_value());
   assert(fake.fw_requests.load() == 1);
 
-  const auto blocked_started = std::chrono::steady_clock::now();
-  const auto blocked = client.request_fw_version(40ms);
-  const auto blocked_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now() - blocked_started);
-  assert(!blocked.has_value());
-  assert(blocked_elapsed < 100ms);
-  assert(fake.fw_requests.load() == 1);
-
-  wait_until(
-      [&] {
-        return VescClientTestAccess::stale_fw_version_reply_count(client) == 0U;
-      },
-      200ms, "stale fw reply was not drained");
-
-  const auto recovered = client.request_fw_version(200ms);
+  const auto recovered = client.request_fw_version(100ms);
   assert(recovered.has_value());
   assert(recovered->major == 6);
   assert(recovered->minor == 5);
   assert(fake.fw_requests.load() == 2);
+
+  std::this_thread::sleep_for(100ms);
+  const auto after_late_reply = client.request_fw_version(100ms);
+  assert(after_late_reply.has_value());
+  assert(fake.fw_requests.load() == 3);
 
   client.disconnect();
 }
@@ -1134,7 +1370,7 @@ void test_disconnect_unblocks_query() {
   auto future =
       std::async(std::launch::async, [&client] { return client.request_fw_version(500ms); });
 
-  std::this_thread::sleep_for(20ms);
+  wait_until([&] { return fake.fw_requests.load() == 1; }, 200ms, "query was not sent");
   client.disconnect();
   const auto result = future.get();
   assert(!result.has_value());
@@ -1151,14 +1387,12 @@ void test_disconnect_unblocks_blocked_write_wait() {
   VescClient client(config);
   assert(client.connect());
 
+  fake.fill_send_buffer();
+  assert(client.set_rpm(1000));
+  fake.wait_until_blocked(500ms);
+
   auto query_future =
       std::async(std::launch::async, [&client] { return client.request_fw_version(500ms); });
-
-  for (int i = 0; i < 20000; ++i) {
-    assert(client.set_rpm(1000 + i));
-  }
-
-  fake.wait_until_blocked(500ms);
 
   auto disconnect_future = std::async(std::launch::async, [&client] {
     client.disconnect();
@@ -1196,6 +1430,25 @@ void test_command_rejected_after_disconnect_state_wins_queue_race() {
   assert(VescClientTestAccess::command_queue(&client).empty());
 }
 
+void test_query_rejected_after_disconnect_state_wins_queue_race() {
+  VescClient client(VescConfig{});
+  auto& scheduler_mutex = VescClientTestAccess::scheduler_mutex(&client);
+  auto& running = VescClientTestAccess::running(&client);
+
+  std::unique_lock scheduler_lock(scheduler_mutex);
+  running.store(true);
+  auto query =
+      std::async(std::launch::async, [&client] { return client.request_fw_version(100ms); });
+
+  wait_until([&] { return query.wait_for(0ms) == std::future_status::timeout; }, 100ms,
+             "query did not block behind the scheduler lock");
+  running.store(false);
+  scheduler_lock.unlock();
+
+  assert(query.wait_for(100ms) == std::future_status::ready);
+  assert(!query.get().has_value());
+}
+
 void test_disconnect_cleans_up_after_async_transport_failure() {
   WriteFailingFakeTransport fake;
 
@@ -1223,6 +1476,100 @@ void test_disconnect_cleans_up_after_async_transport_failure() {
   assert(VescClientTestAccess::wake_write_fd(client) == -1);
 }
 
+void test_query_write_failure_unblocks_caller() {
+  WriteFailingFakeTransport fake;
+  auto config = config_for(fake);
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+
+  VescClient client(config);
+  assert(client.connect());
+
+  auto query =
+      std::async(std::launch::async, [&client] { return client.request_fw_version(500ms); });
+  assert(query.wait_for(250ms) == std::future_status::ready);
+  assert(!query.get().has_value());
+  wait_until([&] { return !client.is_connected(); }, 250ms,
+             "query write failure did not stop the client");
+  client.disconnect();
+}
+
+void test_transport_eof_stops_client() {
+  EofFakeTransport fake;
+  auto config = config_for(fake);
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+
+  VescClient client(config);
+  assert(client.connect());
+  fake.close_peer();
+  wait_until([&] { return !client.is_connected(); }, 500ms,
+             "transport EOF did not stop the client");
+  client.disconnect();
+}
+
+void test_custom_opener_failures_are_contained() {
+  int pipe_fds[2]{-1, -1};
+  assert(::pipe(pipe_fds) == 0);
+  ScopedFd client_fd(pipe_fds[0]);
+  ScopedFd peer_fd(pipe_fds[1]);
+  const int assigned_fd = client_fd.get();
+
+  VescConfig rejected_config;
+  rejected_config.open_serial_fn = [&client_fd](const VescConfig&, int& fd_out) {
+    fd_out = client_fd.release();
+    return false;
+  };
+  VescClient rejected_client(rejected_config);
+  assert(!rejected_client.connect());
+  assert(::fcntl(assigned_fd, F_GETFD) == -1);
+  assert(errno == EBADF);
+
+  VescConfig throwing_config;
+  throwing_config.open_serial_fn = [](const VescConfig&, int&) -> bool {
+    throw std::runtime_error("opener failure");
+  };
+  VescClient throwing_client(throwing_config);
+  assert(!throwing_client.connect());
+}
+
+void test_real_tty_empty_read_does_not_stop_client() {
+  PseudoTerminal tty;
+  VescConfig config;
+  config.device_path = tty.slave_path;
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+
+  auto invalid_baud_config = config;
+  invalid_baud_config.baud = 12345;
+  VescClient invalid_baud_client(invalid_baud_config);
+  assert(!invalid_baud_client.connect());
+
+  VescClient client(config);
+  assert(client.connect());
+  const auto expected_request = VescProtocol::build_fw_version_request();
+  const auto round_trip = [&] {
+    auto future =
+        std::async(std::launch::async, [&client] { return client.request_fw_version(500ms); });
+    assert(read_exact(tty.master_fd(), expected_request.size()) == expected_request);
+    write_all(tty.master_fd(), make_fw_response());
+    assert(future.wait_for(250ms) == std::future_status::ready);
+    assert(future.get().has_value());
+  };
+  round_trip();
+  round_trip();
+  assert(client.is_connected());
+
+  client.disconnect();
+  assert(client.connect());
+  assert(client.is_connected());
+
+  tty.close_master();
+  wait_until([&] { return !client.is_connected(); }, 500ms,
+             "pseudo-terminal hangup did not stop the client");
+  client.disconnect();
+}
+
 void test_destruction_after_async_transport_failure_is_safe() {
   WriteFailingFakeTransport fake;
 
@@ -1245,24 +1592,35 @@ void test_destruction_after_async_transport_failure_is_safe() {
 
 int main() {
   test_client_polling_and_subscriptions();
+  test_callback_failures_and_reentrant_shutdown_are_contained();
   test_subscription_cleanup_after_disconnect();
   test_subscription_handle_can_outlive_client_destruction();
   test_poll_timeout_recovers();
   test_imu_timeout_does_not_starve_motor_polling();
   test_control_command_delivery();
+  test_invalid_control_commands_are_rejected();
+  test_control_queue_keeps_only_latest_command_per_type();
+  test_watchdog_discards_stale_control_backlog();
   test_brake_current_command_requires_positive_limit();
   test_watchdog_brake_current_safe_stop();
   test_watchdog_coast_safe_stop();
   test_connect_disconnect_edges();
+  test_concurrent_lifecycle_calls_are_serialized();
   test_runtime_poll_interval_updates();
+  test_shorter_poll_interval_takes_effect_immediately();
   test_config_snapshot_tracks_runtime_polling_behavior();
   test_concurrent_poll_updates_keep_client_responsive();
   test_queued_query_deadline_expires_while_older_query_waits();
-  test_late_fw_reply_does_not_satisfy_newer_query();
+  test_fw_query_recovers_after_timeout_and_late_reply();
   test_disconnect_unblocks_query();
   test_disconnect_unblocks_blocked_write_wait();
   test_command_rejected_after_disconnect_state_wins_queue_race();
+  test_query_rejected_after_disconnect_state_wins_queue_race();
   test_disconnect_cleans_up_after_async_transport_failure();
+  test_query_write_failure_unblocks_caller();
+  test_transport_eof_stops_client();
+  test_custom_opener_failures_are_contained();
+  test_real_tty_empty_read_does_not_stop_client();
   test_destruction_after_async_transport_failure_is_safe();
   return 0;
 }

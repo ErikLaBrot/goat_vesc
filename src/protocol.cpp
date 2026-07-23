@@ -1,6 +1,9 @@
 #include "goat_vesc/vesc_protocol.hpp"
 
+#include <cmath>
 #include <cstring>
+#include <limits>
+#include <optional>
 #include <type_traits>
 
 namespace goat_vesc {
@@ -43,6 +46,15 @@ template <typename T> void append_integral_be(VescProtocol::Payload& payload, T 
   }
 }
 
+template <typename T> std::optional<T> scaled_integer(float value, double scale) {
+  const double scaled = static_cast<double>(value) * scale;
+  if (!std::isfinite(scaled) || scaled < static_cast<double>(std::numeric_limits<T>::lowest()) ||
+      scaled > static_cast<double>(std::numeric_limits<T>::max())) {
+    return std::nullopt;
+  }
+  return static_cast<T>(scaled);
+}
+
 } // namespace
 
 // ── Framing ───────────────────────────────────────────────────────────────────
@@ -63,7 +75,7 @@ std::uint16_t VescProtocol::crc16ccitt(const Payload& data) noexcept {
 VescProtocol::Payload VescProtocol::frame(const Payload& payload) {
   const std::size_t len = payload.size();
   Payload out;
-  out.reserve(kMaxFramedPacketBytes);
+  out.reserve(len + 6);
 
   if (len <= 255) {
     out.push_back(0x02);
@@ -107,29 +119,42 @@ VescProtocol::Payload VescProtocol::build_set_rpm_command(std::int32_t rpm) {
 }
 
 VescProtocol::Payload VescProtocol::build_set_duty_command(float duty) {
-  // VESC expects duty as int32 scaled by 100000
+  const auto scaled = scaled_integer<std::int32_t>(duty, 100000.0);
+  if (!scaled || duty < -1.0f || duty > 1.0f) {
+    return {};
+  }
   Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetDuty)};
-  append_integral_be(payload, static_cast<std::int32_t>(duty * 100000.0f));
+  append_integral_be(payload, *scaled);
   return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::build_set_current_command(float amps) {
-  // VESC expects current as int32 scaled by 1000 (milliamps)
+  const auto scaled = scaled_integer<std::int32_t>(amps, 1000.0);
+  if (!scaled) {
+    return {};
+  }
   Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetCurrent)};
-  append_integral_be(payload, static_cast<std::int32_t>(amps * 1000.0f));
+  append_integral_be(payload, *scaled);
   return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::build_set_current_brake_command(float amps) {
+  const auto scaled = scaled_integer<std::int32_t>(amps, 1000.0);
+  if (!scaled) {
+    return {};
+  }
   Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetCurrentBrake)};
-  append_integral_be(payload, static_cast<std::int32_t>(amps * 1000.0f));
+  append_integral_be(payload, *scaled);
   return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::build_set_servo_pos_command(float position) {
-  // VESC servo position is typically sent as position * 1000 in a signed 16-bit field.
+  const auto scaled = scaled_integer<std::int16_t>(position, 1000.0);
+  if (!scaled || position < 0.0f || position > 1.0f) {
+    return {};
+  }
   Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetServoPos)};
-  append_integral_be(payload, static_cast<std::int16_t>(position * 1000.0f));
+  append_integral_be(payload, *scaled);
   return frame(payload);
 }
 

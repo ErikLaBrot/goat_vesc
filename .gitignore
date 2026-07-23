@@ -11,6 +11,7 @@
 /Testing/
 /cmake_install.cmake
 /compile_commands.json
+/CMakeUserPresets.json
 /Makefile
 
 # Editor and local agent state
@@ -24,7 +25,6 @@
 /.audit/
 /.jscpd.json
 /docs/html/
-/.editorconfig
 
 #misc local docs
 /TODO.txt
