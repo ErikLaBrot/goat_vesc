@@ -106,8 +106,6 @@ manual validation:
 - `scripts/run_vesc_hardware_smoke.sh`
   Launch the built `vesc_hardware_smoke` binary with environment-driven
   defaults.
-- `scripts/run_quality_gate.sh`
-  Run formatting, static analysis, build, and test checks for the repository.
 
 ## Documentation
 
@@ -119,6 +117,8 @@ cmake --build --preset default --target docs
 
 Generated HTML lands under `docs/html/`.
 
+- [`docs/ai/README.md`](docs/ai/README.md)
+  Context and change guidance for coding agents working in this repository.
 - [`docs/src/ARCHITECTURE.md`](docs/src/ARCHITECTURE.md)
   Implementation-side architecture notes for transport ownership, scheduling,
   and callback behavior.
