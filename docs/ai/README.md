@@ -14,7 +14,8 @@ reusable CMake package for higher-level GOAT applications.
 This repository does not own:
 
 - the ROS adapter or application-level control policy
-- VESC firmware, calibration, or controller-side timeout configuration
+- VESC firmware, FOC calibration, or schema-level interpretation of controller
+  configurations
 - selection or coordination of multiple processes competing for one controller
 
 Start with the [project README](../../README.md) for the supported public
@@ -49,7 +50,8 @@ pin one.
 | Operation | Lifecycle |
 |---|---|
 | Control command | A public method validates and encodes a packet, then replaces any older queued command with the same command ID. The I/O thread writes at most one command per scheduler pass without tracking a reply. Accepted commands refresh the optional watchdog. |
-| One-shot query | Each request carries an absolute deadline from submission; the request queue holds the packet, expected reply ID, and completion callbacks. Only one reply-bearing request is in flight. A matching reply completes it, while queued or in-flight requests can expire. Firmware version is stable during a connection, so a late firmware reply is still semantically valid. |
+| One-shot query | Each request carries an absolute deadline from submission; the request queue holds the packet, expected reply ID, and completion callbacks. Only one reply-bearing request is in flight. A matching reply completes it, while queued or in-flight requests can expire. Firmware version is stable during a connection, so its diagnostic query may recover after a late reply. |
+| Configuration or LispBM management | A management mutex keeps multi-step operations atomic across callers. Motor and app writes first compare the firmware-generated signature with the active image. LispBM transfers use acknowledged bounded chunks. A sent management request that times out stops the connection so a late reply cannot complete newer stateful work. |
 | Periodic telemetry | IMU and motor-state poll channels become due independently. The scheduler sends a poll when no reply-bearing request is in flight, then the I/O thread decodes and timestamps the reply, updates the latest-value cache, and publishes callbacks outside internal locks. IMU wins a tie between due channels. |
 
 All transport traffic converges on the same I/O thread and packet parser.
@@ -63,6 +65,11 @@ watchdog, cache, and callback model.
   thread performs all serial reads and writes.
 - At most one reply-bearing request is in flight, so replies can be matched by
   expected packet ID.
+- Configuration and LispBM operations are serialized for their complete
+  multi-request lifetime. Their deadlines include time waiting for that lock.
+- Motor and app images are opaque, firmware-specific serialized data. Do not
+  infer fields or write an image whose embedded signature differs from the
+  active controller image.
 - Control commands take priority over periodic polls and diagnostic queries.
 - User callbacks run on the I/O thread outside cache and registry locks.
   They must remain short and must not destroy the client. Exceptions are

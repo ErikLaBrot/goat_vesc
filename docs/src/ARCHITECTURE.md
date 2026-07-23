@@ -24,7 +24,7 @@ The I/O loop handles three categories of work:
 
 1. fire-and-forget control commands
 2. periodic IMU and motor-state polls
-3. blocking reply-bearing queries such as firmware version requests
+3. blocking reply-bearing diagnostic and management requests
 
 The scheduler enforces one in-flight reply-bearing request at a time so replies
 can be matched by expected packet ID without a more complicated correlator.
@@ -34,10 +34,26 @@ one queued command per pass so reply timeouts and polls still progress. Polls
 are scheduled from their own channels, and IMU polling wins ties over
 motor-state polling.
 
-One-shot queries are delayed or timed out rather than allowed to permanently
-disturb periodic polling. Firmware version is the only blocking query currently
-supported and is stable during an owned connection, so a late firmware reply is
-equivalent to a reply to a newer firmware query.
+One-shot requests are delayed or timed out rather than allowed to permanently
+disturb periodic polling. Firmware version is stable during an owned connection,
+so its diagnostic query can safely recover after a late reply. Configuration and
+LispBM replies describe or acknowledge mutable state; a sent management request
+that times out stops the connection before newer stateful work can be submitted.
+
+## Configuration And LispBM Management
+
+Motor and application configurations remain firmware-native byte images. Their
+first four bytes are the firmware-generated schema signature. A write first
+reads the active image and rejects a different signature, then sends the image
+and waits for the firmware acknowledgement. Motor writes are persistent;
+application writes explicitly choose volatile or persistent storage.
+
+One management mutex spans each complete public operation so another caller
+cannot interleave a preflight read with its write or split a LispBM transfer.
+LispBM reads assemble bounded chunks. Writes add the firmware length, CRC, and
+current zero flags, erase existing code, then validate every chunk
+acknowledgement and offset. Upload does not start LispBM; execution changes use
+the separate explicit operation.
 
 ## Protocol Layering
 
@@ -96,5 +112,6 @@ the transport layer. The caller decides:
 - optional timestamp and transport hooks for tests or alternate backends
 
 Once the client is constructed, the transport thread owns the operational state
-behind those settings. Runtime mutation is intentionally narrow and currently
-limited to poll interval updates through the dedicated setter methods.
+behind those settings. Host runtime-setting mutation remains limited to poll
+interval updates. Controller configuration and LispBM management are separate
+blocking operations over the same transport owner.
