@@ -76,22 +76,6 @@ struct TelemetrySnapshot {
   std::optional<std::chrono::milliseconds> motor_age;
 };
 
-struct WaitTimeout {
-  std::chrono::milliseconds value;
-};
-
-struct PollInterval {
-  std::chrono::milliseconds value{20ms};
-};
-
-struct PhaseDuration {
-  std::chrono::milliseconds value;
-};
-
-struct CommandPeriod {
-  std::chrono::milliseconds value;
-};
-
 class TelemetryMonitor {
 public:
   void on_imu(const VescIMUData& imu) {
@@ -157,7 +141,7 @@ void print_usage(const char* argv0) {
 }
 
 float clamp_servo(float value) {
-  return std::max(0.0f, std::min(1.0f, value));
+  return std::clamp(value, 0.0f, 1.0f);
 }
 
 template <typename T> T parse_value(const std::string& flag, const std::string& text) {
@@ -258,22 +242,22 @@ Options parse_args(int argc, char** argv) {
 }
 
 template <typename Predicate>
-bool wait_until(Predicate predicate, WaitTimeout timeout,
-                PollInterval poll_interval = PollInterval{20ms}) {
-  const auto deadline = SteadyClock::now() + timeout.value;
+bool wait_until(Predicate predicate, std::chrono::milliseconds timeout,
+                std::chrono::milliseconds poll_interval = 20ms) {
+  const auto deadline = SteadyClock::now() + timeout;
   while (SteadyClock::now() < deadline) {
     if (predicate()) {
       return true;
     }
-    std::this_thread::sleep_for(poll_interval.value);
+    std::this_thread::sleep_for(poll_interval);
   }
   return predicate();
 }
 
 template <typename T, typename Sender>
 PhaseResult stream_phase(const std::string& name, const std::vector<T>& values, VescClient& client,
-                         PhaseDuration phase_duration, CommandPeriod phase_command_period,
-                         Sender sender) {
+                         std::chrono::milliseconds phase_duration,
+                         std::chrono::milliseconds command_period, Sender sender) {
   PhaseResult result;
   result.name = name;
 
@@ -282,7 +266,7 @@ PhaseResult stream_phase(const std::string& name, const std::vector<T>& values, 
   }
 
   std::cout << "Starting " << name << " phase\n";
-  const auto deadline = SteadyClock::now() + phase_duration.value;
+  const auto deadline = SteadyClock::now() + phase_duration;
   std::size_t index = 0;
   while (SteadyClock::now() < deadline) {
     const T value = values[index % values.size()];
@@ -292,7 +276,7 @@ PhaseResult stream_phase(const std::string& name, const std::vector<T>& values, 
     }
     ++result.commands_sent;
     ++index;
-    std::this_thread::sleep_for(phase_command_period.value);
+    std::this_thread::sleep_for(command_period);
   }
 
   result.ok = true;
@@ -402,9 +386,9 @@ int main(int argc, char** argv) {
               << static_cast<int>(initial_fw->minor) << '\n';
 
     const bool got_imu =
-        wait_until([&monitor] { return monitor.snapshot().imu.has_value(); }, WaitTimeout{1500ms});
-    const bool got_motor = wait_until([&monitor] { return monitor.snapshot().motor.has_value(); },
-                                      WaitTimeout{1500ms});
+        wait_until([&monitor] { return monitor.snapshot().imu.has_value(); }, 1500ms);
+    const bool got_motor =
+        wait_until([&monitor] { return monitor.snapshot().motor.has_value(); }, 1500ms);
     if (!got_imu || !got_motor) {
       std::cerr << "Did not receive required startup telemetry samples\n";
       client.disconnect();
@@ -452,7 +436,7 @@ int main(int argc, char** argv) {
         if (!run_phase(1, [&] {
               return stream_phase<float>(
                   "duty", {0.0f, options.duty * 0.5f, options.duty, options.duty * 0.5f, 0.0f},
-                  client, PhaseDuration{options.phase_duration}, CommandPeriod{120ms},
+                  client, options.phase_duration, 120ms,
                   [](VescClient& c, float value) { return c.set_duty(value); });
             })) {
           command_thread_done.store(true);
@@ -464,7 +448,7 @@ int main(int argc, char** argv) {
               return stream_phase<float>(
                   "current",
                   {0.0f, options.current * 0.5f, options.current, options.current * 0.5f, 0.0f},
-                  client, PhaseDuration{options.phase_duration}, CommandPeriod{120ms},
+                  client, options.phase_duration, 120ms,
                   [](VescClient& c, float value) { return c.set_current(value); });
             })) {
           command_thread_done.store(true);
@@ -474,8 +458,7 @@ int main(int argc, char** argv) {
 
         if (!run_phase(3, [&] {
               return stream_phase<int>("rpm", {0, options.rpm / 2, options.rpm, options.rpm / 2, 0},
-                                       client, PhaseDuration{options.phase_duration},
-                                       CommandPeriod{120ms},
+                                       client, options.phase_duration, 120ms,
                                        [](VescClient& c, int value) { return c.set_rpm(value); });
             })) {
           command_thread_done.store(true);
@@ -491,7 +474,7 @@ int main(int argc, char** argv) {
                    {options.duty, options.servo_center},
                    {options.duty * 0.5f, right},
                    {0.0f, options.servo_center}},
-                  client, PhaseDuration{options.phase_duration}, CommandPeriod{140ms},
+                  client, options.phase_duration, 140ms,
                   [](VescClient& c, const ThrottleSteeringCommand& command) {
                     return c.set_duty(command.duty) && c.set_servo_pos(clamp_servo(command.servo));
                   });
@@ -507,7 +490,7 @@ int main(int argc, char** argv) {
                   "brake_current",
                   {options.brake_current * 0.5f, options.brake_current,
                    options.brake_current * 0.5f},
-                  client, PhaseDuration{options.phase_duration}, CommandPeriod{120ms},
+                  client, options.phase_duration, 120ms,
                   [](VescClient& c, float value) { return c.set_current_brake(value); });
             })) {
           command_thread_done.store(true);
@@ -519,7 +502,7 @@ int main(int argc, char** argv) {
               return stream_phase<float>(
                   "servo",
                   {options.servo_center, left, options.servo_center, right, options.servo_center},
-                  client, PhaseDuration{options.phase_duration}, CommandPeriod{160ms},
+                  client, options.phase_duration, 160ms,
                   [](VescClient& c, float value) { return c.set_servo_pos(clamp_servo(value)); });
             })) {
           command_thread_done.store(true);

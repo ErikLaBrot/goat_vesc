@@ -38,7 +38,7 @@ pin one.
 | Layer | Responsibility | Location |
 |---|---|---|
 | Public contract | Consumer-facing configuration, data types, lifecycle, control, telemetry, and query APIs | [`include/goat_vesc/`](../../include/goat_vesc/) |
-| Packet framing | Integral field serialization, frame boundaries, CRC validation, and byte-stream resynchronization | [`packet_builder.cpp`](../../src/packet_builder.cpp), [`packet_parser.cpp`](../../src/packet_parser.cpp) |
+| Packet framing | Integral field serialization, frame boundaries, CRC validation, and byte-stream resynchronization | [`protocol.cpp`](../../src/protocol.cpp), [`packet_parser.cpp`](../../src/packet_parser.cpp) |
 | Message protocol | Command IDs, field masks, scaling, and typed request/response encoding | [`protocol_ids.hpp`](../../include/goat_vesc/protocol_ids.hpp), [`protocol.cpp`](../../src/protocol.cpp) |
 | Transport and scheduling | Serial lifecycle, work arbitration, timeouts, reply matching, caches, callbacks, and shutdown | [`vesc_client.cpp`](../../src/vesc_client.cpp) |
 | Automated evidence | Exact wire-format tests and fake-transport lifecycle, concurrency, and failure tests | [`test_protocol.cpp`](../../tests/test_protocol.cpp), [`test_client.cpp`](../../tests/test_client.cpp) |
@@ -48,7 +48,7 @@ pin one.
 
 | Operation | Lifecycle |
 |---|---|
-| Control command | A public method encodes a packet under the protocol lock and submits it to the command queue. Control commands have scheduler priority, and the I/O thread writes them without tracking a reply. Accepted control commands refresh the optional watchdog. |
+| Control command | A public method encodes a packet and submits it to the command queue. Control commands have scheduler priority, and the I/O thread writes them without tracking a reply. Accepted control commands refresh the optional watchdog. |
 | One-shot query | Each request carries an absolute deadline from submission; the request queue holds the packet, expected reply ID, and completion callbacks. Only one reply-bearing request is in flight. A matching reply completes it, while queued or in-flight requests can expire. The current firmware query also tracks and discards a late reply after timeout. |
 | Periodic telemetry | IMU and motor-state poll channels become due independently. The scheduler sends a poll when no reply-bearing request is in flight, then the I/O thread decodes and timestamps the reply, updates the latest-value cache, and publishes callbacks outside internal locks. IMU wins a tie between due channels. |
 

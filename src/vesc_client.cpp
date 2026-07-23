@@ -312,30 +312,15 @@ VescClient::SubscriptionHandle VescClient::subscribe_motor_state(MotorStateCallb
 }
 
 bool VescClient::set_rpm(std::int32_t rpm) {
-  std::vector<std::uint8_t> packet;
-  {
-    std::lock_guard lock(protocol_mutex_);
-    packet = cmd_protocol_.build_set_rpm_command(rpm);
-  }
-  return enqueue_control_command(std::move(packet));
+  return enqueue_control_command(VescProtocol::build_set_rpm_command(rpm));
 }
 
 bool VescClient::set_duty(float duty) {
-  std::vector<std::uint8_t> packet;
-  {
-    std::lock_guard lock(protocol_mutex_);
-    packet = cmd_protocol_.build_set_duty_command(duty);
-  }
-  return enqueue_control_command(std::move(packet));
+  return enqueue_control_command(VescProtocol::build_set_duty_command(duty));
 }
 
 bool VescClient::set_current(float amps) {
-  std::vector<std::uint8_t> packet;
-  {
-    std::lock_guard lock(protocol_mutex_);
-    packet = cmd_protocol_.build_set_current_command(amps);
-  }
-  return enqueue_control_command(std::move(packet));
+  return enqueue_control_command(VescProtocol::build_set_current_command(amps));
 }
 
 bool VescClient::set_current_brake(float amps) {
@@ -344,21 +329,11 @@ bool VescClient::set_current_brake(float amps) {
     return false;
   }
 
-  std::vector<std::uint8_t> packet;
-  {
-    std::lock_guard lock(protocol_mutex_);
-    packet = cmd_protocol_.build_set_current_brake_command(clamped_amps);
-  }
-  return enqueue_control_command(std::move(packet));
+  return enqueue_control_command(VescProtocol::build_set_current_brake_command(clamped_amps));
 }
 
 bool VescClient::set_servo_pos(float position) {
-  std::vector<std::uint8_t> packet;
-  {
-    std::lock_guard lock(protocol_mutex_);
-    packet = cmd_protocol_.build_set_servo_pos_command(position);
-  }
-  return enqueue_control_command(std::move(packet));
+  return enqueue_control_command(VescProtocol::build_set_servo_pos_command(position));
 }
 
 std::optional<FwVersion> VescClient::request_fw_version(std::chrono::milliseconds timeout) {
@@ -372,13 +347,10 @@ std::optional<FwVersion> VescClient::request_fw_version(std::chrono::millisecond
   ScheduledRequest request;
   request.kind = ScheduledRequest::Kind::FwVersion;
   request.expected_id = static_cast<std::uint8_t>(VescPacketCommID::FwVersion);
-  {
-    std::lock_guard lock(protocol_mutex_);
-    request.packet = cmd_protocol_.build_fw_version_request();
-  }
+  request.packet = VescProtocol::build_fw_version_request();
   request.deadline = deadline;
-  request.on_success = [this, state](const Payload& payload) {
-    const auto parsed = io_protocol_.parse_fw_version(payload);
+  request.on_success = [state](const Payload& payload) {
+    const auto parsed = VescProtocol::parse_fw_version(payload);
     std::lock_guard lock(state->mutex);
     state->result = parsed;
     state->completed = true;
@@ -599,7 +571,7 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
 
   if (completed_request) {
     if (completed_request->kind == ScheduledRequest::Kind::PollImu) {
-      if (auto data = io_protocol_.parse_get_imu_data(payload)) {
+      if (auto data = VescProtocol::parse_get_imu_data(payload)) {
         data->stamp_ns = stamp_ns;
         imu_channel_.last_sample = SteadyClock::now();
         {
@@ -612,7 +584,7 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
     }
 
     if (completed_request->kind == ScheduledRequest::Kind::PollMotorState) {
-      if (auto state = io_protocol_.parse_get_values(payload)) {
+      if (auto state = VescProtocol::parse_get_values(payload)) {
         state->stamp_ns = stamp_ns;
         motor_channel_.last_sample = SteadyClock::now();
         {
@@ -720,12 +692,11 @@ VescClient::dequeue_due_watchdog_command(const SteadyClock::time_point& now) {
     control_watchdog_ = ControlWatchdogState{};
   }
 
-  std::lock_guard lock(protocol_mutex_);
   if (config_.command_watchdog_action == ControlWatchdogAction::Coast) {
-    return cmd_protocol_.build_set_current_command(0.0f);
+    return VescProtocol::build_set_current_command(0.0f);
   }
   if (config_.command_watchdog_action == ControlWatchdogAction::BrakeCurrent) {
-    return cmd_protocol_.build_set_current_brake_command(
+    return VescProtocol::build_set_current_brake_command(
         clamp_brake_current(config_.command_watchdog_brake_current, config_.max_brake_current));
   }
   return std::nullopt;
@@ -907,10 +878,10 @@ VescClient::make_due_poll_request(PollChannel& channel, const SteadyClock::time_
 
   if (channel.kind == PollChannel::Kind::Imu) {
     request.kind = ScheduledRequest::Kind::PollImu;
-    request.packet = io_protocol_.build_get_imu_data_request();
+    request.packet = VescProtocol::build_get_imu_data_request();
   } else {
     request.kind = ScheduledRequest::Kind::PollMotorState;
-    request.packet = io_protocol_.build_get_values_request();
+    request.packet = VescProtocol::build_get_values_request();
   }
   return request;
 }

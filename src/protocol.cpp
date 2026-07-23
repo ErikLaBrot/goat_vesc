@@ -1,6 +1,7 @@
 #include "goat_vesc/vesc_protocol.hpp"
 
 #include <cstring>
+#include <type_traits>
 
 namespace goat_vesc {
 
@@ -30,6 +31,16 @@ float read_f32(const std::uint8_t* p) {
   float f;
   std::memcpy(&f, &bits, sizeof(f));
   return f;
+}
+
+template <typename T> void append_integral_be(VescProtocol::Payload& payload, T value) {
+  static_assert(std::is_integral_v<T>, "append_integral_be requires an integral type");
+
+  using U = std::make_unsigned_t<T>;
+  const U raw = static_cast<U>(value);
+  for (int i = sizeof(U) - 1; i >= 0; --i) {
+    payload.push_back(static_cast<std::uint8_t>((raw >> (8 * i)) & 0xFFU));
+  }
 }
 
 } // namespace
@@ -76,60 +87,50 @@ VescProtocol::Payload VescProtocol::frame(const Payload& payload) {
 // ── Request builders ──────────────────────────────────────────────────────────
 
 VescProtocol::Payload VescProtocol::build_fw_version_request() {
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::FwVersion),
-  }));
+  return frame({static_cast<std::uint8_t>(VescPacketCommID::FwVersion)});
 }
 
 VescProtocol::Payload VescProtocol::build_get_values_request() {
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::GetValues),
-  }));
+  return frame({static_cast<std::uint8_t>(VescPacketCommID::GetValues)});
 }
 
 VescProtocol::Payload VescProtocol::build_get_imu_data_request(std::uint16_t mask) {
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::GetImuData),
-      static_cast<std::uint16_t>(mask),
-  }));
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::GetImuData)};
+  append_integral_be(payload, mask);
+  return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::build_set_rpm_command(std::int32_t rpm) {
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::SetRpm),
-      rpm,
-  }));
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetRpm)};
+  append_integral_be(payload, rpm);
+  return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::build_set_duty_command(float duty) {
   // VESC expects duty as int32 scaled by 100000
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::SetDuty),
-      static_cast<std::int32_t>(duty * 100000.0f),
-  }));
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetDuty)};
+  append_integral_be(payload, static_cast<std::int32_t>(duty * 100000.0f));
+  return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::build_set_current_command(float amps) {
   // VESC expects current as int32 scaled by 1000 (milliamps)
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::SetCurrent),
-      static_cast<std::int32_t>(amps * 1000.0f),
-  }));
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetCurrent)};
+  append_integral_be(payload, static_cast<std::int32_t>(amps * 1000.0f));
+  return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::build_set_current_brake_command(float amps) {
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::SetCurrentBrake),
-      static_cast<std::int32_t>(amps * 1000.0f),
-  }));
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetCurrentBrake)};
+  append_integral_be(payload, static_cast<std::int32_t>(amps * 1000.0f));
+  return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::build_set_servo_pos_command(float position) {
   // VESC servo position is typically sent as position * 1000 in a signed 16-bit field.
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::SetServoPos),
-      static_cast<std::int16_t>(position * 1000.0f),
-  }));
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetServoPos)};
+  append_integral_be(payload, static_cast<std::int16_t>(position * 1000.0f));
+  return frame(payload);
 }
 
 // ── Response parsers ──────────────────────────────────────────────────────────

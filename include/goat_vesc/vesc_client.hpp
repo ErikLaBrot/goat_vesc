@@ -11,7 +11,6 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -282,14 +281,11 @@ private:
   int fd_{-1};
   int wake_pipe_[2]{-1, -1};
 
-  VescProtocol io_protocol_;
-  VescProtocol cmd_protocol_;
   VescPacketParser parser_;
 
   std::thread io_thread_;
   std::atomic<bool> running_{false};
 
-  std::mutex protocol_mutex_;
   std::mutex scheduler_mutex_;
   std::deque<std::vector<std::uint8_t>> command_queue_;
   std::deque<ScheduledRequest> request_queue_;

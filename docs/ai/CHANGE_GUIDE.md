@@ -8,7 +8,7 @@ documentation.
 
 | Change | Primary locations | Evidence and context |
 |---|---|---|
-| Packet framing, CRC, resynchronization | [`packet_builder.cpp`](../../src/packet_builder.cpp), [`packet_parser.cpp`](../../src/packet_parser.cpp) | [`test_protocol.cpp`](../../tests/test_protocol.cpp) |
+| Packet framing, CRC, resynchronization | [`protocol.cpp`](../../src/protocol.cpp), [`packet_parser.cpp`](../../src/packet_parser.cpp) | [`test_protocol.cpp`](../../tests/test_protocol.cpp) |
 | Message IDs, masks, typed payloads | [`protocol_ids.hpp`](../../include/goat_vesc/protocol_ids.hpp), [`types.hpp`](../../include/goat_vesc/types.hpp), [`protocol.cpp`](../../src/protocol.cpp) | [`test_protocol.cpp`](../../tests/test_protocol.cpp), [readiness checklist](../src/BRIDGE_READINESS_CHECKLIST.md) |
 | Transport lifecycle, scheduling, polling, queries | [`vesc_client.hpp`](../../include/goat_vesc/vesc_client.hpp), [`vesc_client.cpp`](../../src/vesc_client.cpp) | [`test_client.cpp`](../../tests/test_client.cpp), [architecture notes](../src/ARCHITECTURE.md) |
 | Watchdog, braking, callbacks, shutdown safety | [`types.hpp`](../../include/goat_vesc/types.hpp), [`vesc_client.cpp`](../../src/vesc_client.cpp) | [`test_client.cpp`](../../tests/test_client.cpp), [architecture notes](../src/ARCHITECTURE.md) |

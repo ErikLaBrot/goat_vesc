@@ -38,10 +38,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_library(goat_vesc
-  src/packet_builder.cpp
   src/packet_parser.cpp
   src/protocol.cpp
-  src/types.cpp
   src/vesc_client.cpp
 )
 add_library(goat_vesc::goat_vesc ALIAS goat_vesc)
@@ -59,26 +57,12 @@ goat_vesc_enable_sanitizers(goat_vesc)
 goat_vesc_enable_static_analysis(goat_vesc)
 
 if(GOAT_VESC_BUILD_EXAMPLES)
-  add_executable(vesc_example examples/vesc_example.cpp)
-  target_link_libraries(vesc_example PRIVATE goat_vesc)
-  goat_vesc_enable_sanitizers(vesc_example)
-  goat_vesc_enable_static_analysis(vesc_example)
-  add_executable(vesc_probe examples/vesc_probe.cpp)
-  target_link_libraries(vesc_probe PRIVATE goat_vesc)
-  goat_vesc_enable_sanitizers(vesc_probe)
-  goat_vesc_enable_static_analysis(vesc_probe)
-  add_executable(vesc_duty_sweep examples/vesc_duty_sweep.cpp)
-  target_link_libraries(vesc_duty_sweep PRIVATE goat_vesc)
-  goat_vesc_enable_sanitizers(vesc_duty_sweep)
-  goat_vesc_enable_static_analysis(vesc_duty_sweep)
-  add_executable(vesc_servo_sweep examples/vesc_servo_sweep.cpp)
-  target_link_libraries(vesc_servo_sweep PRIVATE goat_vesc)
-  goat_vesc_enable_sanitizers(vesc_servo_sweep)
-  goat_vesc_enable_static_analysis(vesc_servo_sweep)
-  add_executable(vesc_hardware_smoke examples/vesc_hardware_smoke.cpp)
-  target_link_libraries(vesc_hardware_smoke PRIVATE goat_vesc)
-  goat_vesc_enable_sanitizers(vesc_hardware_smoke)
-  goat_vesc_enable_static_analysis(vesc_hardware_smoke)
+  foreach(example IN ITEMS vesc_probe vesc_duty_sweep vesc_servo_sweep vesc_hardware_smoke)
+    add_executable(${example} examples/${example}.cpp)
+    target_link_libraries(${example} PRIVATE goat_vesc)
+    goat_vesc_enable_sanitizers(${example})
+    goat_vesc_enable_static_analysis(${example})
+  endforeach()
 endif()
 
 if(GOAT_VESC_BUILD_TESTS)

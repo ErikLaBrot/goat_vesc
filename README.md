@@ -74,39 +74,6 @@ target_link_libraries(my_app PRIVATE goat_vesc::goat_vesc)
 `goat_vesc_ros` is expected to consume the library through this installed
 package interface rather than via direct source-tree coupling.
 
-## API At A Glance
-
-| Area | Primary entry points | Purpose |
-|---|---|---|
-| Discovery and lifecycle | `VescClient::find_devices()`, `connect()`, `disconnect()`, `is_connected()` | Find a controller and manage the transport thread. |
-| Telemetry access | `latest_imu()`, `latest_motor_state()`, `subscribe_imu(...)`, `subscribe_motor_state(...)` | Read cached samples or receive fresh decoded telemetry. |
-| Runtime config | `set_imu_poll_interval(...)`, `set_motor_poll_interval(...)`, `config_snapshot()` | Adjust polling cadence and inspect active bridge-facing settings. |
-| Control output | `set_rpm(...)`, `set_duty(...)`, `set_current(...)`, `set_current_brake(...)`, `set_servo_pos(...)` | Send motor and servo commands through the serialized transport path. |
-| Diagnostics | `request_fw_version(...)` | Perform a blocking firmware version query. |
-
-Lower-level packet and protocol helpers are also installed for applications that
-need direct access to framing or typed request/response parsing.
-
-## Manual Tools
-
-The repository ships focused real-hardware examples and thin runner scripts for
-manual validation:
-
-- `vesc_probe`
-  Connect, query firmware, and confirm IMU plus motor-state telemetry.
-- `vesc_duty_sweep`
-  Manual duty-cycle sweep against real hardware.
-- `vesc_servo_sweep`
-  Manual servo sweep around a chosen center position.
-- `vesc_hardware_smoke`
-  Integrated smoke pass for telemetry, subscriptions, firmware queries, and
-  concurrent command streaming.
-- `scripts/run_vesc_probe.sh`
-  Launch the built `vesc_probe` binary with transparent operator arguments.
-- `scripts/run_vesc_hardware_smoke.sh`
-  Launch the built `vesc_hardware_smoke` binary with environment-driven
-  defaults.
-
 ## Documentation
 
 Doxygen-generated API docs can be built with:

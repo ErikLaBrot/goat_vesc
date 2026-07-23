@@ -11,7 +11,7 @@ shape the implementation.
 on a single background thread. Public methods can be called from multiple
 threads, but they do not write directly to the file descriptor. Instead they:
 
-- build packets under `protocol_mutex_`
+- build packets with stateless protocol helpers
 - hand queued work to the scheduler under `scheduler_mutex_`
 - wake the transport thread through `wake_pipe_`
 
@@ -37,11 +37,10 @@ counted and dropped so a stale response cannot satisfy a newer request.
 
 ## Protocol Layering
 
-The wire-format code is split into three public pieces:
+The wire-format code is split into two public pieces:
 
-- `VescPacketBuilder` serializes typed integer fields into payload bytes
 - `VescPacketParser` consumes raw bytes and emits validated payload frames
-- `VescProtocol` builds typed requests and parses typed responses
+- `VescProtocol` serializes and frames typed requests, then parses typed responses
 
 `VescClient` depends on these pieces but does not own the byte-layout details of
 individual messages. That separation keeps transport logic independent from
