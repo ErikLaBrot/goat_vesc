@@ -13,7 +13,7 @@ documentation.
 | Transport lifecycle, scheduling, polling, queries | [`vesc_client.hpp`](../../include/goat_vesc/vesc_client.hpp), [`vesc_client.cpp`](../../src/vesc_client.cpp) | [`test_client.cpp`](../../tests/test_client.cpp), [architecture notes](../src/ARCHITECTURE.md) |
 | Watchdog, braking, callbacks, shutdown safety | [`types.hpp`](../../include/goat_vesc/types.hpp), [`vesc_client.cpp`](../../src/vesc_client.cpp) | [`test_client.cpp`](../../tests/test_client.cpp), [architecture notes](../src/ARCHITECTURE.md) |
 | Build, install, and exported package | [`CMakeLists.txt`](../../CMakeLists.txt), [`cmake/`](../../cmake/), [`package.xml`](../../package.xml) | [README install flow](../../README.md#installed-surface) |
-| Operator or hardware workflow | [`examples/`](../../examples/), [`scripts/`](../../scripts/) | [operator quick reference](../src/OPERATOR_QUICK_REFERENCE.md); manual validation only |
+| Operator or hardware workflow | [`examples/`](../../examples/) | [operator quick reference](../src/OPERATOR_QUICK_REFERENCE.md); manual validation only |
 
 Before changing shared behavior, find every caller and related test. For
 example:
@@ -49,7 +49,7 @@ controller.
 
 ## Hardware Boundary
 
-Do not run examples or scripts against a VESC unless the user explicitly
+Do not run examples against a VESC unless the user explicitly
 authorizes hardware access and identifies the target. Treat actuator arming as
 a separate consequential action requiring explicit authorization. Start with
 the non-actuating probe when that is sufficient; use sweeps or the smoke tool's

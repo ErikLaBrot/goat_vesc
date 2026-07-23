@@ -18,10 +18,6 @@ inline std::uint16_t crc16ccitt(const std::vector<std::uint8_t>& data) {
   return crc;
 }
 
-inline void append_u8(std::vector<std::uint8_t>& payload, std::uint8_t value) {
-  payload.push_back(value);
-}
-
 inline void append_u16(std::vector<std::uint8_t>& payload, std::uint16_t value) {
   payload.push_back(static_cast<std::uint8_t>((value >> 8) & 0xFF));
   payload.push_back(static_cast<std::uint8_t>(value & 0xFF));

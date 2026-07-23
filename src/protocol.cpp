@@ -94,9 +94,9 @@ VescProtocol::Payload VescProtocol::build_get_values_request() {
   return frame({static_cast<std::uint8_t>(VescPacketCommID::GetValues)});
 }
 
-VescProtocol::Payload VescProtocol::build_get_imu_data_request(std::uint16_t mask) {
+VescProtocol::Payload VescProtocol::build_get_imu_data_request() {
   Payload payload{static_cast<std::uint8_t>(VescPacketCommID::GetImuData)};
-  append_integral_be(payload, mask);
+  append_integral_be(payload, std::uint16_t{0xFFFFU});
   return frame(payload);
 }
 
@@ -220,38 +220,29 @@ std::optional<VescIMUData> VescProtocol::parse_get_imu_data(const Payload& paylo
     return v;
   };
 
-  if (mask & static_cast<std::uint16_t>(VescImuMask::Roll))
-    d.roll = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::Pitch))
-    d.pitch = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::Yaw))
-    d.yaw = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::AccX))
-    d.acc_x = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::AccY))
-    d.acc_y = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::AccZ))
-    d.acc_z = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::GyroX))
-    d.gyro_x = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::GyroY))
-    d.gyro_y = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::GyroZ))
-    d.gyro_z = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::MagX))
-    d.mag_x = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::MagY))
-    d.mag_y = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::MagZ))
-    d.mag_z = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::QuatW))
-    d.quat_w = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::QuatX))
-    d.quat_x = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::QuatY))
-    d.quat_y = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::QuatZ))
-    d.quat_z = next();
+  std::uint32_t field_bit = 1U;
+  const auto next_if_present = [&](float& field) {
+    if ((mask & field_bit) != 0U)
+      field = next();
+    field_bit <<= 1U;
+  };
+
+  next_if_present(d.roll);
+  next_if_present(d.pitch);
+  next_if_present(d.yaw);
+  next_if_present(d.acc_x);
+  next_if_present(d.acc_y);
+  next_if_present(d.acc_z);
+  next_if_present(d.gyro_x);
+  next_if_present(d.gyro_y);
+  next_if_present(d.gyro_z);
+  next_if_present(d.mag_x);
+  next_if_present(d.mag_y);
+  next_if_present(d.mag_z);
+  next_if_present(d.quat_w);
+  next_if_present(d.quat_x);
+  next_if_present(d.quat_y);
+  next_if_present(d.quat_z);
 
   return d;
 }

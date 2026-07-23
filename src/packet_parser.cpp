@@ -157,11 +157,9 @@ std::uint16_t VescPacketParser::crc16ccitt_(const std::vector<std::uint8_t>& dat
     crc = static_cast<std::uint16_t>(crc ^ (static_cast<std::uint32_t>(byte) << 8U));
 
     for (int i = 0; i < 8; ++i) {
-      if ((crc & 0x8000U) != 0U) {
-        crc = static_cast<std::uint16_t>((crc << 1) ^ 0x1021U);
-      } else {
-        crc = static_cast<std::uint16_t>(crc << 1);
-      }
+      const auto shifted = static_cast<std::uint32_t>(crc) << 1U;
+      crc = (crc & 0x8000U) != 0U ? static_cast<std::uint16_t>(shifted ^ 0x1021U)
+                                  : static_cast<std::uint16_t>(shifted);
     }
   }
 

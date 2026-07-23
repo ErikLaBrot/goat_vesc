@@ -38,10 +38,9 @@ public:
   static Payload build_get_values_request();
   /**
    * @brief Builds a `COMM_GET_IMU_DATA` request packet.
-   * @param mask IMU fields to request. Defaults to @ref DefaultVescImuMask.
    * @return Fully framed packet ready to write to the transport.
    */
-  static Payload build_get_imu_data_request(std::uint16_t mask = DefaultVescImuMask);
+  static Payload build_get_imu_data_request();
   /**
    * @brief Builds a `COMM_SET_RPM` command packet.
    * @param rpm Target RPM value.

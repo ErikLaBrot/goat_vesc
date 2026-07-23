@@ -33,7 +33,7 @@ void print_usage(const char* argv0) {
 }
 
 float clamp_servo(float value) {
-  return std::max(0.0f, std::min(1.0f, value));
+  return std::clamp(value, 0.0f, 1.0f);
 }
 
 } // namespace

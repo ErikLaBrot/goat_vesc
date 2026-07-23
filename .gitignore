@@ -22,10 +22,6 @@
 # Logs and reports
 /.jscpd-report/
 /.audit/
-!/scripts/
-/scripts/*
-!/scripts/run_vesc_probe.sh
-!/scripts/run_vesc_hardware_smoke.sh
 /.jscpd.json
 /docs/html/
 /.editorconfig

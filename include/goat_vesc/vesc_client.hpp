@@ -251,7 +251,6 @@ private:
     Kind kind;
     std::atomic<std::int64_t> interval_ms{0};
     SteadyClock::time_point next_due{};
-    SteadyClock::time_point last_sample{};
   };
 
   struct ScheduledRequest {
@@ -290,7 +289,7 @@ private:
   std::deque<std::vector<std::uint8_t>> command_queue_;
   std::deque<ScheduledRequest> request_queue_;
   std::optional<ScheduledRequest> in_flight_request_;
-  std::unordered_map<std::uint8_t, std::size_t> stale_query_reply_counts_;
+  std::size_t stale_fw_version_reply_count_{0};
   ControlWatchdogState control_watchdog_;
 
   mutable std::mutex cache_mutex_;
@@ -302,13 +301,11 @@ private:
   PollChannel imu_channel_{PollChannel::Kind::Imu};
   PollChannel motor_channel_{PollChannel::Kind::MotorState};
 
-  static std::uint64_t default_wall_time_ns();
   std::uint64_t wall_time_ns() const;
 
   void io_loop();
   void dispatch_payload(const Payload& payload, std::uint64_t stamp_ns);
   void handle_request_timeout();
-  void schedule_query(ScheduledRequest request);
 
   bool enqueue_control_command(std::vector<std::uint8_t> packet);
   bool control_watchdog_enabled() const;

@@ -42,7 +42,7 @@ pin one.
 | Message protocol | Command IDs, field masks, scaling, and typed request/response encoding | [`protocol_ids.hpp`](../../include/goat_vesc/protocol_ids.hpp), [`protocol.cpp`](../../src/protocol.cpp) |
 | Transport and scheduling | Serial lifecycle, work arbitration, timeouts, reply matching, caches, callbacks, and shutdown | [`vesc_client.cpp`](../../src/vesc_client.cpp) |
 | Automated evidence | Exact wire-format tests and fake-transport lifecycle, concurrency, and failure tests | [`test_protocol.cpp`](../../tests/test_protocol.cpp), [`test_client.cpp`](../../tests/test_client.cpp) |
-| Manual validation | Operator-visible probe, sweep, and hardware smoke workflows | [`examples/`](../../examples/), [`scripts/`](../../scripts/) |
+| Manual validation | Operator-visible probe, sweep, and hardware smoke workflows | [`examples/`](../../examples/) |
 
 ## Operation Lifecycles
 

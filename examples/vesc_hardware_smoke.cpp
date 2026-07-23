@@ -43,8 +43,6 @@ struct Options {
   int baud{115200};
   std::chrono::milliseconds imu_poll_interval{20};
   std::chrono::milliseconds motor_poll_interval{50};
-  std::chrono::milliseconds poll_response_timeout{100};
-  std::chrono::milliseconds query_guard_window{5};
   std::chrono::milliseconds phase_duration{1500};
   std::chrono::milliseconds status_interval{500};
   float duty{0.05f};
@@ -242,14 +240,13 @@ Options parse_args(int argc, char** argv) {
 }
 
 template <typename Predicate>
-bool wait_until(Predicate predicate, std::chrono::milliseconds timeout,
-                std::chrono::milliseconds poll_interval = 20ms) {
+bool wait_until(Predicate predicate, std::chrono::milliseconds timeout) {
   const auto deadline = SteadyClock::now() + timeout;
   while (SteadyClock::now() < deadline) {
     if (predicate()) {
       return true;
     }
-    std::this_thread::sleep_for(poll_interval);
+    std::this_thread::sleep_for(20ms);
   }
   return predicate();
 }
@@ -258,12 +255,7 @@ template <typename T, typename Sender>
 PhaseResult stream_phase(const std::string& name, const std::vector<T>& values, VescClient& client,
                          std::chrono::milliseconds phase_duration,
                          std::chrono::milliseconds command_period, Sender sender) {
-  PhaseResult result;
-  result.name = name;
-
-  if (values.empty()) {
-    return result;
-  }
+  PhaseResult result{name};
 
   std::cout << "Starting " << name << " phase\n";
   const auto deadline = SteadyClock::now() + phase_duration;
@@ -281,20 +273,6 @@ PhaseResult stream_phase(const std::string& name, const std::vector<T>& values, 
 
   result.ok = true;
   return result;
-}
-
-const char* fw_query_under_load_status(bool arm_actuators, bool query_completed,
-                                       bool query_succeeded) {
-  if (!arm_actuators) {
-    return "skipped";
-  }
-  if (query_succeeded) {
-    return "success";
-  }
-  if (query_completed) {
-    return "timeout/clean miss";
-  }
-  return "not-run";
 }
 
 std::string age_string(const std::optional<std::chrono::milliseconds>& age) {
@@ -327,9 +305,6 @@ bool send_safe_outputs(VescClient& client, float servo_center) {
   ok = client.set_duty(0.0f) && ok;
   ok = client.set_current(0.0f) && ok;
   ok = client.set_rpm(0) && ok;
-  if (!client.set_current_brake(0.0f)) {
-    std::cout << "Skipped zero brake-current command; using zero-current cleanup instead\n";
-  }
   ok = client.set_servo_pos(clamp_servo(servo_center)) && ok;
   std::this_thread::sleep_for(300ms);
   return ok;
@@ -346,8 +321,7 @@ int main(int argc, char** argv) {
     config.baud = options.baud;
     config.imu_poll_interval = options.imu_poll_interval;
     config.motor_poll_interval = options.motor_poll_interval;
-    config.poll_response_timeout = options.poll_response_timeout;
-    config.query_guard_window = options.query_guard_window;
+    config.poll_response_timeout = 100ms;
     config.max_brake_current = options.brake_current;
 
     std::cout << "VESC hardware smoke starting\n";
@@ -401,13 +375,11 @@ int main(int argc, char** argv) {
     std::atomic<bool> command_thread_done{false};
     std::atomic<int> active_phase{0};
     std::vector<PhaseResult> phase_results;
-    std::mutex phase_mutex;
     std::atomic<bool> phase_failure{false};
     bool fw_query_under_load_completed = false;
     bool fw_query_under_load_success = false;
     bool imu_progress_during_commands = false;
     bool motor_progress_during_commands = false;
-    bool rpm_feedback_observed = false;
     float rpm_phase_peak_abs_rpm = 0.0f;
     auto last_progress_snapshot = monitor.snapshot();
 
@@ -421,7 +393,6 @@ int main(int argc, char** argv) {
           if (!result.ok) {
             phase_failure.store(true);
           }
-          std::lock_guard lock(phase_mutex);
           phase_results.push_back(result);
         };
 
@@ -535,9 +506,6 @@ int main(int argc, char** argv) {
         }
         if (active_phase.load() == 3 && snapshot.motor) {
           rpm_phase_peak_abs_rpm = std::max(rpm_phase_peak_abs_rpm, std::abs(snapshot.motor->rpm));
-          if (std::abs(snapshot.motor->rpm) > 1.0f) {
-            rpm_feedback_observed = true;
-          }
         }
       }
       last_progress_snapshot = snapshot;
@@ -555,13 +523,8 @@ int main(int argc, char** argv) {
                   << (fw_query_under_load_success ? "success" : "timeout/clean miss") << '\n';
       }
 
-      if (!options.arm_actuators) {
-        if (snapshot.imu_samples >= 2 && snapshot.motor_samples >= 2 &&
-            SteadyClock::now() >= monitoring_deadline) {
-          break;
-        }
-      } else if (command_thread_done.load() &&
-                 (fw_query_under_load_completed || phase_failure.load())) {
+      if (options.arm_actuators && command_thread_done.load() &&
+          (fw_query_under_load_completed || phase_failure.load())) {
         break;
       }
 
@@ -582,6 +545,7 @@ int main(int argc, char** argv) {
 
     client.disconnect();
 
+    const bool rpm_feedback_observed = rpm_phase_peak_abs_rpm > 1.0f;
     bool success = true;
     if (!options.arm_actuators) {
       success = final_snapshot.imu_samples > 0 && final_snapshot.motor_samples > 0;
@@ -593,10 +557,14 @@ int main(int argc, char** argv) {
 
     std::cout << "Smoke summary:\n";
     std::cout << "  initial_fw_query: success\n";
+    const char* fw_query_status =
+        !options.arm_actuators
+            ? "skipped"
+            : (fw_query_under_load_success
+                   ? "success"
+                   : (fw_query_under_load_completed ? "timeout/clean miss" : "not-run"));
     std::cout << "  fw_query_under_load: "
-              << fw_query_under_load_status(options.arm_actuators, fw_query_under_load_completed,
-                                            fw_query_under_load_success)
-              << '\n';
+              << fw_query_status << '\n';
     std::cout << "  imu_samples: " << final_snapshot.imu_samples << '\n';
     std::cout << "  motor_samples: " << final_snapshot.motor_samples << '\n';
     std::cout << "  rpm_feedback_observed: " << (rpm_feedback_observed ? "yes" : "no") << '\n';
@@ -609,12 +577,9 @@ int main(int argc, char** argv) {
       std::cout << "  last_power_w: " << power_w << '\n';
     }
 
-    {
-      std::lock_guard lock(phase_mutex);
-      for (const auto& phase : phase_results) {
-        std::cout << "  phase_" << phase.name << ": " << (phase.ok ? "ok" : "failed") << " ("
-                  << phase.commands_sent << " commands)\n";
-      }
+    for (const auto& phase : phase_results) {
+      std::cout << "  phase_" << phase.name << ": " << (phase.ok ? "ok" : "failed") << " ("
+                << phase.commands_sent << " commands)\n";
     }
 
     if (!success) {

@@ -135,11 +135,4 @@ Built examples:
   Runs telemetry polling, live subscriptions, concurrent command streaming, and
   a firmware query under load in one operator-facing hardware smoke pass.
 
-Operator runner scripts:
-
-- `scripts/run_vesc_probe.sh`
-- `scripts/run_vesc_hardware_smoke.sh`
-
-The runner scripts do not build the examples for you. Build the requested
-target first, then use the script as a thin wrapper around the already-built
-binary.
+Build the requested target first, then invoke its binary from `build/default/`.

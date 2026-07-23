@@ -82,8 +82,8 @@ float clamp_brake_current(float requested_amps, float max_brake_current) {
   return std::min(requested_amps, max_brake_current);
 }
 
-std::optional<std::chrono::microseconds> micros_until(const SteadyClock::time_point& deadline,
-                                                      const SteadyClock::time_point& now) {
+std::chrono::microseconds micros_until(const SteadyClock::time_point& deadline,
+                                      const SteadyClock::time_point& now) {
   if (deadline <= now) {
     return std::chrono::microseconds::zero();
   }
@@ -213,8 +213,6 @@ bool VescClient::connect() {
   const auto now = SteadyClock::now();
   imu_channel_.next_due = now;
   motor_channel_.next_due = now;
-  imu_channel_.last_sample = SteadyClock::time_point{};
-  motor_channel_.last_sample = SteadyClock::time_point{};
 
   running_.store(true);
   io_thread_ = std::thread(&VescClient::io_loop, this);
@@ -363,24 +361,24 @@ std::optional<FwVersion> VescClient::request_fw_version(std::chrono::millisecond
     state->cv.notify_all();
   };
 
-  schedule_query(std::move(request));
+  {
+    std::lock_guard scheduler_lock(scheduler_mutex_);
+    request_queue_.push_back(std::move(request));
+  }
+  wake_io_thread();
 
   std::unique_lock lock(state->mutex);
   state->cv.wait(lock, [&state] { return state->completed; });
   return state->result;
 }
 
-std::uint64_t VescClient::default_wall_time_ns() {
-  const auto now = std::chrono::system_clock::now().time_since_epoch();
-  return static_cast<std::uint64_t>(
-      std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
-}
-
 std::uint64_t VescClient::wall_time_ns() const {
   if (config_.wall_time_ns) {
     return config_.wall_time_ns();
   }
-  return default_wall_time_ns();
+  const auto now = std::chrono::system_clock::now().time_since_epoch();
+  return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
 }
 
 void VescClient::io_loop() {
@@ -390,15 +388,11 @@ void VescClient::io_loop() {
     handle_request_timeout();
 
     const auto now = SteadyClock::now();
-    std::optional<std::chrono::microseconds> wait_time = std::chrono::milliseconds(50);
+    auto wait_time = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::milliseconds(50));
 
-    auto tighten_wait = [&](const std::optional<std::chrono::microseconds>& candidate) {
-      if (!candidate) {
-        return;
-      }
-      if (!wait_time || *candidate < *wait_time) {
-        wait_time = candidate;
-      }
+    const auto tighten_wait = [&](std::chrono::microseconds candidate) {
+      wait_time = std::min(wait_time, candidate);
     };
 
     {
@@ -428,21 +422,17 @@ void VescClient::io_loop() {
     }
 
     struct timeval tv {};
-    struct timeval* tv_ptr = nullptr;
-    if (wait_time) {
-      const auto raw = wait_time->count();
-      const auto bounded = raw > 0 ? raw : 0;
-      tv.tv_sec = static_cast<decltype(tv.tv_sec)>(bounded / 1000000);
-      tv.tv_usec = static_cast<decltype(tv.tv_usec)>(bounded % 1000000);
-      tv_ptr = &tv;
-    }
+    const auto raw = wait_time.count();
+    const auto bounded = raw > 0 ? raw : 0;
+    tv.tv_sec = static_cast<decltype(tv.tv_sec)>(bounded / 1000000);
+    tv.tv_usec = static_cast<decltype(tv.tv_usec)>(bounded % 1000000);
 
     fd_set rfds;
     FD_ZERO(&rfds);
     FD_SET(fd_, &rfds);
     FD_SET(wake_pipe_[0], &rfds);
 
-    const int rc = ::select(nfds, &rfds, nullptr, nullptr, tv_ptr);
+    const int rc = ::select(nfds, &rfds, nullptr, nullptr, &tv);
     if (rc < 0) {
       if (errno == EINTR) {
         continue;
@@ -551,13 +541,9 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
     // Timed-out blocking queries may still produce a late reply on the wire.
     // Count and drop those replies so they cannot satisfy a newer query with
     // the same expected packet ID.
-    auto stale_reply = stale_query_reply_counts_.find(payload[0]);
-    if (stale_reply != stale_query_reply_counts_.end()) {
-      if (stale_reply->second > 1) {
-        --stale_reply->second;
-      } else {
-        stale_query_reply_counts_.erase(stale_reply);
-      }
+    if (payload[0] == static_cast<std::uint8_t>(VescPacketCommID::FwVersion) &&
+        stale_fw_version_reply_count_ > 0) {
+      --stale_fw_version_reply_count_;
       drop_stale_query_reply = true;
     } else if (in_flight_request_ && in_flight_request_->expected_id == payload[0]) {
       completed_request = std::move(in_flight_request_);
@@ -573,7 +559,6 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
     if (completed_request->kind == ScheduledRequest::Kind::PollImu) {
       if (auto data = VescProtocol::parse_get_imu_data(payload)) {
         data->stamp_ns = stamp_ns;
-        imu_channel_.last_sample = SteadyClock::now();
         {
           std::lock_guard lock(cache_mutex_);
           imu_data_cache_ = *data;
@@ -586,7 +571,6 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
     if (completed_request->kind == ScheduledRequest::Kind::PollMotorState) {
       if (auto state = VescProtocol::parse_get_values(payload)) {
         state->stamp_ns = stamp_ns;
-        motor_channel_.last_sample = SteadyClock::now();
         {
           std::lock_guard lock(cache_mutex_);
           motor_state_cache_ = *state;
@@ -612,7 +596,7 @@ void VescClient::handle_request_timeout() {
       timed_out = std::move(in_flight_request_);
       if (timed_out->kind == ScheduledRequest::Kind::FwVersion) {
         // Only a request that was actually sent can still yield a stale late reply.
-        ++stale_query_reply_counts_[timed_out->expected_id];
+        ++stale_fw_version_reply_count_;
       }
       in_flight_request_.reset();
     }
@@ -635,14 +619,6 @@ void VescClient::handle_request_timeout() {
       expired.on_timeout();
     }
   }
-}
-
-void VescClient::schedule_query(ScheduledRequest request) {
-  {
-    std::lock_guard lock(scheduler_mutex_);
-    request_queue_.push_back(std::move(request));
-  }
-  wake_io_thread();
 }
 
 bool VescClient::enqueue_control_command(std::vector<std::uint8_t> packet) {
@@ -812,7 +788,7 @@ void VescClient::clear_pending_work() {
     queued_requests.swap(request_queue_);
     in_flight = std::move(in_flight_request_);
     in_flight_request_.reset();
-    stale_query_reply_counts_.clear();
+    stale_fw_version_reply_count_ = 0;
     control_watchdog_ = ControlWatchdogState{};
   }
 
@@ -836,15 +812,14 @@ VescClient::PollChannel* VescClient::select_due_poll_channel(const SteadyClock::
       continue;
     }
 
-    const auto due = channel->next_due.time_since_epoch().count() == 0 ? now : channel->next_due;
-    if (due > now) {
+    if (channel->next_due > now) {
       continue;
     }
 
-    if (!selected || due < selected_due ||
-        (due == selected_due && channel->kind == PollChannel::Kind::Imu)) {
+    if (!selected || channel->next_due < selected_due ||
+        (channel->next_due == selected_due && channel->kind == PollChannel::Kind::Imu)) {
       selected = channel;
-      selected_due = due;
+      selected_due = channel->next_due;
     }
   }
 
@@ -859,9 +834,6 @@ VescClient::make_due_poll_request(PollChannel& channel, const SteadyClock::time_
   }
 
   const auto interval = std::chrono::milliseconds(interval_ms);
-  if (channel.next_due.time_since_epoch().count() == 0) {
-    channel.next_due = now;
-  }
   if (channel.next_due > now) {
     return std::nullopt;
   }
@@ -901,22 +873,17 @@ VescClient::dequeue_ready_query(const SteadyClock::time_point& now) {
       }
     }
     if (!request_queue_.empty()) {
-      // connect() seeds next_due before the I/O loop runs, so treating a zero epoch as
-      // "due now" here is only a fallback for partially initialized test setups.
-      const auto imu_next_due =
-          imu_channel_.next_due.time_since_epoch().count() == 0 ? now : imu_channel_.next_due;
-      const auto motor_next_due =
-          motor_channel_.next_due.time_since_epoch().count() == 0 ? now : motor_channel_.next_due;
-      const auto time_until_imu =
-          imu_channel_.interval_ms.load() > 0 ? imu_next_due - now : SteadyClock::duration::max();
+      const auto time_until_imu = imu_channel_.interval_ms.load() > 0
+                                      ? imu_channel_.next_due - now
+                                      : SteadyClock::duration::max();
       const auto time_until_motor = motor_channel_.interval_ms.load() > 0
-                                        ? motor_next_due - now
+                                        ? motor_channel_.next_due - now
                                         : SteadyClock::duration::max();
       const auto next_poll_due = std::min(time_until_imu, time_until_motor);
 
       if (next_poll_due > config_.query_guard_window) {
         for (auto it = request_queue_.begin(); it != request_queue_.end(); ++it) {
-          if (stale_query_reply_counts_.count(it->expected_id) != 0U) {
+          if (stale_fw_version_reply_count_ != 0U) {
             // If a stale reply never arrives, the queued query still completes by expiry.
             continue;
           }

@@ -10,27 +10,13 @@ option(GOAT_VESC_BUILD_EXAMPLES "Build examples" ON)
 option(GOAT_VESC_ENABLE_CLANG_TIDY "Enable clang-tidy" OFF)
 option(GOAT_VESC_ENABLE_CPPCHECK "Enable cppcheck" OFF)
 option(GOAT_VESC_ENABLE_ASAN "Enable AddressSanitizer" OFF)
-option(GOAT_VESC_ENABLE_LSAN "Enable LeakSanitizer" OFF)
 option(GOAT_VESC_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(GOAT_VESC_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
 option(GOAT_VESC_ENABLE_WERROR "Treat compiler warnings as errors" OFF)
-option(GOAT_VESC_ENABLE_STRICT_MODE "Enable the repository quality gate defaults" OFF)
-option(GOAT_VESC_CLANG_TIDY_WARNINGS_AS_ERRORS "Treat clang-tidy findings as errors" OFF)
-option(GOAT_VESC_CPPCHECK_EXHAUSTIVE "Use cppcheck exhaustive mode" OFF)
 option(GOAT_VESC_BUILD_DOCS "Enable API documentation target when Doxygen is available" ON)
-
-if(GOAT_VESC_ENABLE_STRICT_MODE)
-  set(GOAT_VESC_ENABLE_CLANG_TIDY ON CACHE BOOL "Enable clang-tidy" FORCE)
-  set(GOAT_VESC_ENABLE_CPPCHECK ON CACHE BOOL "Enable cppcheck" FORCE)
-  set(GOAT_VESC_ENABLE_WERROR ON CACHE BOOL "Treat compiler warnings as errors" FORCE)
-  set(GOAT_VESC_CLANG_TIDY_WARNINGS_AS_ERRORS ON CACHE BOOL
-      "Treat clang-tidy findings as errors" FORCE)
-  set(GOAT_VESC_CPPCHECK_EXHAUSTIVE ON CACHE BOOL "Use cppcheck exhaustive mode" FORCE)
-endif()
 
 include(cmake/StaticAnalysis.cmake)
 include(cmake/Sanitizers.cmake)
-include(cmake/Docs.cmake)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -54,14 +40,12 @@ target_include_directories(goat_vesc
 
 goat_vesc_enable_warnings(goat_vesc)
 goat_vesc_enable_sanitizers(goat_vesc)
-goat_vesc_enable_static_analysis(goat_vesc)
 
 if(GOAT_VESC_BUILD_EXAMPLES)
   foreach(example IN ITEMS vesc_probe vesc_duty_sweep vesc_servo_sweep vesc_hardware_smoke)
     add_executable(${example} examples/${example}.cpp)
     target_link_libraries(${example} PRIVATE goat_vesc)
     goat_vesc_enable_sanitizers(${example})
-    goat_vesc_enable_static_analysis(${example})
   endforeach()
 endif()
 
@@ -111,4 +95,19 @@ install(FILES package.xml
   DESTINATION ${GOAT_VESC_INSTALL_DATADIR}
 )
 
-goat_vesc_configure_docs()
+if(GOAT_VESC_BUILD_DOCS)
+  find_package(Doxygen QUIET)
+  if(DOXYGEN_FOUND)
+    set(GOAT_VESC_DOCS_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/docs")
+    set(GOAT_VESC_DOXYFILE "${CMAKE_CURRENT_BINARY_DIR}/Doxyfile")
+    configure_file(docs/Doxyfile.in "${GOAT_VESC_DOXYFILE}" @ONLY)
+    add_custom_target(docs
+      COMMAND "${DOXYGEN_EXECUTABLE}" "${GOAT_VESC_DOXYFILE}"
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+      COMMENT "Generating goat_vesc API documentation"
+      VERBATIM
+    )
+  else()
+    message(STATUS "Doxygen not found; skipping API documentation target.")
+  endif()
+endif()
