@@ -1,6 +1,10 @@
 #include "goat_vesc/vesc_protocol.hpp"
 
+#include <cmath>
 #include <cstring>
+#include <limits>
+#include <optional>
+#include <type_traits>
 
 namespace goat_vesc {
 
@@ -32,6 +36,25 @@ float read_f32(const std::uint8_t* p) {
   return f;
 }
 
+template <typename T> void append_integral_be(VescProtocol::Payload& payload, T value) {
+  static_assert(std::is_integral_v<T>, "append_integral_be requires an integral type");
+
+  using U = std::make_unsigned_t<T>;
+  const U raw = static_cast<U>(value);
+  for (int i = sizeof(U) - 1; i >= 0; --i) {
+    payload.push_back(static_cast<std::uint8_t>((raw >> (8 * i)) & 0xFFU));
+  }
+}
+
+template <typename T> std::optional<T> scaled_integer(float value, double scale) {
+  const double scaled = static_cast<double>(value) * scale;
+  if (!std::isfinite(scaled) || scaled < static_cast<double>(std::numeric_limits<T>::lowest()) ||
+      scaled > static_cast<double>(std::numeric_limits<T>::max())) {
+    return std::nullopt;
+  }
+  return static_cast<T>(scaled);
+}
+
 } // namespace
 
 // ── Framing ───────────────────────────────────────────────────────────────────
@@ -52,7 +75,7 @@ std::uint16_t VescProtocol::crc16ccitt(const Payload& data) noexcept {
 VescProtocol::Payload VescProtocol::frame(const Payload& payload) {
   const std::size_t len = payload.size();
   Payload out;
-  out.reserve(kMaxFramedPacketBytes);
+  out.reserve(len + 6);
 
   if (len <= 255) {
     out.push_back(0x02);
@@ -76,60 +99,63 @@ VescProtocol::Payload VescProtocol::frame(const Payload& payload) {
 // ── Request builders ──────────────────────────────────────────────────────────
 
 VescProtocol::Payload VescProtocol::build_fw_version_request() {
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::FwVersion),
-  }));
+  return frame({static_cast<std::uint8_t>(VescPacketCommID::FwVersion)});
 }
 
 VescProtocol::Payload VescProtocol::build_get_values_request() {
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::GetValues),
-  }));
+  return frame({static_cast<std::uint8_t>(VescPacketCommID::GetValues)});
 }
 
-VescProtocol::Payload VescProtocol::build_get_imu_data_request(std::uint16_t mask) {
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::GetImuData),
-      static_cast<std::uint16_t>(mask),
-  }));
+VescProtocol::Payload VescProtocol::build_get_imu_data_request() {
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::GetImuData)};
+  append_integral_be(payload, std::uint16_t{0xFFFFU});
+  return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::build_set_rpm_command(std::int32_t rpm) {
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::SetRpm),
-      rpm,
-  }));
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetRpm)};
+  append_integral_be(payload, rpm);
+  return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::build_set_duty_command(float duty) {
-  // VESC expects duty as int32 scaled by 100000
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::SetDuty),
-      static_cast<std::int32_t>(duty * 100000.0f),
-  }));
+  const auto scaled = scaled_integer<std::int32_t>(duty, 100000.0);
+  if (!scaled || duty < -1.0f || duty > 1.0f) {
+    return {};
+  }
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetDuty)};
+  append_integral_be(payload, *scaled);
+  return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::build_set_current_command(float amps) {
-  // VESC expects current as int32 scaled by 1000 (milliamps)
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::SetCurrent),
-      static_cast<std::int32_t>(amps * 1000.0f),
-  }));
+  const auto scaled = scaled_integer<std::int32_t>(amps, 1000.0);
+  if (!scaled) {
+    return {};
+  }
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetCurrent)};
+  append_integral_be(payload, *scaled);
+  return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::build_set_current_brake_command(float amps) {
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::SetCurrentBrake),
-      static_cast<std::int32_t>(amps * 1000.0f),
-  }));
+  const auto scaled = scaled_integer<std::int32_t>(amps, 1000.0);
+  if (!scaled) {
+    return {};
+  }
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetCurrentBrake)};
+  append_integral_be(payload, *scaled);
+  return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::build_set_servo_pos_command(float position) {
-  // VESC servo position is typically sent as position * 1000 in a signed 16-bit field.
-  return frame(builder_.build_packet({
-      static_cast<std::uint8_t>(VescPacketCommID::SetServoPos),
-      static_cast<std::int16_t>(position * 1000.0f),
-  }));
+  const auto scaled = scaled_integer<std::int16_t>(position, 1000.0);
+  if (!scaled || position < 0.0f || position > 1.0f) {
+    return {};
+  }
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetServoPos)};
+  append_integral_be(payload, *scaled);
+  return frame(payload);
 }
 
 // ── Response parsers ──────────────────────────────────────────────────────────
@@ -219,38 +245,29 @@ std::optional<VescIMUData> VescProtocol::parse_get_imu_data(const Payload& paylo
     return v;
   };
 
-  if (mask & static_cast<std::uint16_t>(VescImuMask::Roll))
-    d.roll = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::Pitch))
-    d.pitch = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::Yaw))
-    d.yaw = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::AccX))
-    d.acc_x = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::AccY))
-    d.acc_y = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::AccZ))
-    d.acc_z = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::GyroX))
-    d.gyro_x = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::GyroY))
-    d.gyro_y = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::GyroZ))
-    d.gyro_z = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::MagX))
-    d.mag_x = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::MagY))
-    d.mag_y = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::MagZ))
-    d.mag_z = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::QuatW))
-    d.quat_w = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::QuatX))
-    d.quat_x = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::QuatY))
-    d.quat_y = next();
-  if (mask & static_cast<std::uint16_t>(VescImuMask::QuatZ))
-    d.quat_z = next();
+  std::uint32_t field_bit = 1U;
+  const auto next_if_present = [&](float& field) {
+    if ((mask & field_bit) != 0U)
+      field = next();
+    field_bit <<= 1U;
+  };
+
+  next_if_present(d.roll);
+  next_if_present(d.pitch);
+  next_if_present(d.yaw);
+  next_if_present(d.acc_x);
+  next_if_present(d.acc_y);
+  next_if_present(d.acc_z);
+  next_if_present(d.gyro_x);
+  next_if_present(d.gyro_y);
+  next_if_present(d.gyro_z);
+  next_if_present(d.mag_x);
+  next_if_present(d.mag_y);
+  next_if_present(d.mag_z);
+  next_if_present(d.quat_w);
+  next_if_present(d.quat_x);
+  next_if_present(d.quat_y);
+  next_if_present(d.quat_z);
 
   return d;
 }

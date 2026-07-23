@@ -11,15 +11,12 @@ inline std::uint16_t crc16ccitt(const std::vector<std::uint8_t>& data) {
   for (const auto byte : data) {
     crc ^= static_cast<std::uint16_t>(byte) << 8;
     for (int i = 0; i < 8; ++i) {
-      crc = (crc & 0x8000U) != 0U ? static_cast<std::uint16_t>((crc << 1) ^ 0x1021U)
-                                  : static_cast<std::uint16_t>(crc << 1);
+      const auto shifted = static_cast<std::uint32_t>(crc) << 1U;
+      crc = (crc & 0x8000U) != 0U ? static_cast<std::uint16_t>(shifted ^ 0x1021U)
+                                  : static_cast<std::uint16_t>(shifted);
     }
   }
   return crc;
-}
-
-inline void append_u8(std::vector<std::uint8_t>& payload, std::uint8_t value) {
-  payload.push_back(value);
 }
 
 inline void append_u16(std::vector<std::uint8_t>& payload, std::uint16_t value) {

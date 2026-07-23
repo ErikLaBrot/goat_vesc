@@ -18,7 +18,7 @@ Checks: >
   -readability-magic-numbers,
   -readability-uppercase-literal-suffix
 WarningsAsErrors: ''
-HeaderFilterRegex: '^(include|src)/'
+HeaderFilterRegex: '(include|src)/'
 FormatStyle: file
 CheckOptions:
   - key: readability-identifier-naming.NamespaceCase

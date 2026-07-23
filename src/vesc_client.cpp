@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 
 #include <fcntl.h>
@@ -15,6 +16,7 @@ namespace goat_vesc {
 namespace {
 using SteadyClock = std::chrono::steady_clock;
 constexpr auto kWriteWaitPollInterval = std::chrono::milliseconds(50);
+thread_local VescClient* active_io_client = nullptr;
 
 int baud_to_constant(int baud) {
   switch (baud) {
@@ -52,10 +54,14 @@ bool open_serial(const std::string& path, int baud, int& fd_out) {
     return false;
   }
 
-  ::cfsetispeed(&tty, static_cast<speed_t>(baud_const));
-  ::cfsetospeed(&tty, static_cast<speed_t>(baud_const));
+  if (::cfsetispeed(&tty, static_cast<speed_t>(baud_const)) != 0 ||
+      ::cfsetospeed(&tty, static_cast<speed_t>(baud_const)) != 0) {
+    ::close(fd);
+    return false;
+  }
   ::cfmakeraw(&tty);
-  tty.c_cc[VMIN] = 0;
+  tty.c_cflag |= CLOCAL | CREAD;
+  tty.c_cc[VMIN] = 1;
   tty.c_cc[VTIME] = 0;
 
   if (::tcsetattr(fd, TCSANOW, &tty) != 0) {
@@ -76,14 +82,15 @@ bool set_nonblocking(int fd) {
 }
 
 float clamp_brake_current(float requested_amps, float max_brake_current) {
-  if (requested_amps <= 0.0f || max_brake_current <= 0.0f) {
+  if (!std::isfinite(requested_amps) || !std::isfinite(max_brake_current) ||
+      requested_amps <= 0.0f || max_brake_current <= 0.0f) {
     return 0.0f;
   }
   return std::min(requested_amps, max_brake_current);
 }
 
-std::optional<std::chrono::microseconds> micros_until(const SteadyClock::time_point& deadline,
-                                                      const SteadyClock::time_point& now) {
+std::chrono::microseconds micros_until(const SteadyClock::time_point& deadline,
+                                      const SteadyClock::time_point& now) {
   if (deadline <= now) {
     return std::chrono::microseconds::zero();
   }
@@ -106,7 +113,10 @@ void invoke_callbacks(const CallbackMap& callbacks, const Sample& sample) {
   for (const auto& [id, cb] : callbacks) {
     (void)id;
     if (cb) {
-      cb(sample);
+      try {
+        cb(sample);
+      } catch (...) {
+      }
     }
   }
 }
@@ -153,8 +163,8 @@ std::vector<std::string> VescClient::find_devices() {
 
 VescClient::VescClient(VescConfig config)
     : config_(std::move(config)), callback_registry_(std::make_shared<CallbackRegistry>()) {
-  imu_channel_.interval_ms.store(config_.imu_poll_interval.count());
-  motor_channel_.interval_ms.store(config_.motor_poll_interval.count());
+  imu_channel_.interval_ms.store(std::max<std::int64_t>(config_.imu_poll_interval.count(), 0));
+  motor_channel_.interval_ms.store(std::max<std::int64_t>(config_.motor_poll_interval.count(), 0));
 }
 
 VescClient::~VescClient() {
@@ -162,6 +172,11 @@ VescClient::~VescClient() {
 }
 
 bool VescClient::connect() {
+  if (active_io_client == this) {
+    return running_.load();
+  }
+
+  std::lock_guard lifecycle_lock(lifecycle_mutex_);
   if (running_.load()) {
     return true;
   }
@@ -169,7 +184,16 @@ bool VescClient::connect() {
   cleanup_transport_state();
 
   if (config_.open_serial_fn) {
-    if (!config_.open_serial_fn(config_, fd_)) {
+    bool opened = false;
+    try {
+      opened = config_.open_serial_fn(config_, fd_);
+    } catch (...) {
+    }
+    if (!opened) {
+      if (fd_ >= 0) {
+        ::close(fd_);
+        fd_ = -1;
+      }
       return false;
     }
   } else {
@@ -213,21 +237,32 @@ bool VescClient::connect() {
   const auto now = SteadyClock::now();
   imu_channel_.next_due = now;
   motor_channel_.next_due = now;
-  imu_channel_.last_sample = SteadyClock::time_point{};
-  motor_channel_.last_sample = SteadyClock::time_point{};
 
   running_.store(true);
-  io_thread_ = std::thread(&VescClient::io_loop, this);
+  try {
+    io_thread_ = std::thread(&VescClient::io_loop, this);
+  } catch (...) {
+    running_.store(false);
+    cleanup_transport_state();
+    return false;
+  }
   return true;
 }
 
 void VescClient::disconnect() {
+  if (active_io_client == this) {
+    std::lock_guard lock(scheduler_mutex_);
+    running_.store(false);
+    return;
+  }
+
+  std::lock_guard lifecycle_lock(lifecycle_mutex_);
   {
     std::lock_guard lock(scheduler_mutex_);
     running_.store(false);
+    wake_io_thread();
   }
 
-  wake_io_thread();
   cleanup_transport_state();
 }
 
@@ -257,13 +292,21 @@ bool VescClient::is_connected() const {
 }
 
 void VescClient::set_motor_poll_interval(std::chrono::milliseconds interval) {
-  motor_channel_.interval_ms.store(interval.count());
-  wake_io_thread();
+  std::lock_guard lock(scheduler_mutex_);
+  motor_channel_.interval_ms.store(std::max<std::int64_t>(interval.count(), 0));
+  motor_channel_.reschedule.store(true);
+  if (running_.load()) {
+    wake_io_thread();
+  }
 }
 
 void VescClient::set_imu_poll_interval(std::chrono::milliseconds interval) {
-  imu_channel_.interval_ms.store(interval.count());
-  wake_io_thread();
+  std::lock_guard lock(scheduler_mutex_);
+  imu_channel_.interval_ms.store(std::max<std::int64_t>(interval.count(), 0));
+  imu_channel_.reschedule.store(true);
+  if (running_.load()) {
+    wake_io_thread();
+  }
 }
 
 VescClientConfigSnapshot VescClient::config_snapshot() const {
@@ -312,30 +355,15 @@ VescClient::SubscriptionHandle VescClient::subscribe_motor_state(MotorStateCallb
 }
 
 bool VescClient::set_rpm(std::int32_t rpm) {
-  std::vector<std::uint8_t> packet;
-  {
-    std::lock_guard lock(protocol_mutex_);
-    packet = cmd_protocol_.build_set_rpm_command(rpm);
-  }
-  return enqueue_control_command(std::move(packet));
+  return enqueue_control_command(VescProtocol::build_set_rpm_command(rpm));
 }
 
 bool VescClient::set_duty(float duty) {
-  std::vector<std::uint8_t> packet;
-  {
-    std::lock_guard lock(protocol_mutex_);
-    packet = cmd_protocol_.build_set_duty_command(duty);
-  }
-  return enqueue_control_command(std::move(packet));
+  return enqueue_control_command(VescProtocol::build_set_duty_command(duty));
 }
 
 bool VescClient::set_current(float amps) {
-  std::vector<std::uint8_t> packet;
-  {
-    std::lock_guard lock(protocol_mutex_);
-    packet = cmd_protocol_.build_set_current_command(amps);
-  }
-  return enqueue_control_command(std::move(packet));
+  return enqueue_control_command(VescProtocol::build_set_current_command(amps));
 }
 
 bool VescClient::set_current_brake(float amps) {
@@ -344,25 +372,15 @@ bool VescClient::set_current_brake(float amps) {
     return false;
   }
 
-  std::vector<std::uint8_t> packet;
-  {
-    std::lock_guard lock(protocol_mutex_);
-    packet = cmd_protocol_.build_set_current_brake_command(clamped_amps);
-  }
-  return enqueue_control_command(std::move(packet));
+  return enqueue_control_command(VescProtocol::build_set_current_brake_command(clamped_amps));
 }
 
 bool VescClient::set_servo_pos(float position) {
-  std::vector<std::uint8_t> packet;
-  {
-    std::lock_guard lock(protocol_mutex_);
-    packet = cmd_protocol_.build_set_servo_pos_command(position);
-  }
-  return enqueue_control_command(std::move(packet));
+  return enqueue_control_command(VescProtocol::build_set_servo_pos_command(position));
 }
 
 std::optional<FwVersion> VescClient::request_fw_version(std::chrono::milliseconds timeout) {
-  if (!running_.load() || timeout <= std::chrono::milliseconds::zero()) {
+  if (active_io_client == this || timeout <= std::chrono::milliseconds::zero()) {
     return std::nullopt;
   }
 
@@ -372,13 +390,10 @@ std::optional<FwVersion> VescClient::request_fw_version(std::chrono::millisecond
   ScheduledRequest request;
   request.kind = ScheduledRequest::Kind::FwVersion;
   request.expected_id = static_cast<std::uint8_t>(VescPacketCommID::FwVersion);
-  {
-    std::lock_guard lock(protocol_mutex_);
-    request.packet = cmd_protocol_.build_fw_version_request();
-  }
+  request.packet = VescProtocol::build_fw_version_request();
   request.deadline = deadline;
-  request.on_success = [this, state](const Payload& payload) {
-    const auto parsed = io_protocol_.parse_fw_version(payload);
+  request.on_success = [state](const Payload& payload) {
+    const auto parsed = VescProtocol::parse_fw_version(payload);
     std::lock_guard lock(state->mutex);
     state->result = parsed;
     state->completed = true;
@@ -391,42 +406,52 @@ std::optional<FwVersion> VescClient::request_fw_version(std::chrono::millisecond
     state->cv.notify_all();
   };
 
-  schedule_query(std::move(request));
+  {
+    std::lock_guard scheduler_lock(scheduler_mutex_);
+    if (!running_.load()) {
+      return std::nullopt;
+    }
+    request_queue_.push_back(std::move(request));
+    wake_io_thread();
+  }
 
   std::unique_lock lock(state->mutex);
   state->cv.wait(lock, [&state] { return state->completed; });
   return state->result;
 }
 
-std::uint64_t VescClient::default_wall_time_ns() {
+std::uint64_t VescClient::wall_time_ns() const {
+  if (config_.wall_time_ns) {
+    try {
+      return config_.wall_time_ns();
+    } catch (...) {
+    }
+  }
   const auto now = std::chrono::system_clock::now().time_since_epoch();
   return static_cast<std::uint64_t>(
       std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
 }
 
-std::uint64_t VescClient::wall_time_ns() const {
-  if (config_.wall_time_ns) {
-    return config_.wall_time_ns();
-  }
-  return default_wall_time_ns();
-}
-
 void VescClient::io_loop() {
+  active_io_client = this;
   const int nfds = std::max(fd_, wake_pipe_[0]) + 1;
 
   while (running_.load()) {
+    const auto schedule_now = SteadyClock::now();
+    for (PollChannel* channel : {&imu_channel_, &motor_channel_}) {
+      if (channel->reschedule.exchange(false)) {
+        channel->next_due = schedule_now;
+      }
+    }
+
     handle_request_timeout();
 
     const auto now = SteadyClock::now();
-    std::optional<std::chrono::microseconds> wait_time = std::chrono::milliseconds(50);
+    auto wait_time = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::milliseconds(50));
 
-    auto tighten_wait = [&](const std::optional<std::chrono::microseconds>& candidate) {
-      if (!candidate) {
-        return;
-      }
-      if (!wait_time || *candidate < *wait_time) {
-        wait_time = candidate;
-      }
+    const auto tighten_wait = [&](std::chrono::microseconds candidate) {
+      wait_time = std::min(wait_time, candidate);
     };
 
     {
@@ -436,6 +461,9 @@ void VescClient::io_loop() {
       }
       if (control_watchdog_.armed) {
         tighten_wait(micros_until(control_watchdog_.deadline, now));
+      }
+      if (!command_queue_.empty()) {
+        tighten_wait(std::chrono::microseconds::zero());
       }
       const auto next_query =
           std::min_element(request_queue_.begin(), request_queue_.end(),
@@ -456,21 +484,17 @@ void VescClient::io_loop() {
     }
 
     struct timeval tv {};
-    struct timeval* tv_ptr = nullptr;
-    if (wait_time) {
-      const auto raw = wait_time->count();
-      const auto bounded = raw > 0 ? raw : 0;
-      tv.tv_sec = static_cast<decltype(tv.tv_sec)>(bounded / 1000000);
-      tv.tv_usec = static_cast<decltype(tv.tv_usec)>(bounded % 1000000);
-      tv_ptr = &tv;
-    }
+    const auto raw = wait_time.count();
+    const auto bounded = raw > 0 ? raw : 0;
+    tv.tv_sec = static_cast<decltype(tv.tv_sec)>(bounded / 1000000);
+    tv.tv_usec = static_cast<decltype(tv.tv_usec)>(bounded % 1000000);
 
     fd_set rfds;
     FD_ZERO(&rfds);
     FD_SET(fd_, &rfds);
     FD_SET(wake_pipe_[0], &rfds);
 
-    const int rc = ::select(nfds, &rfds, nullptr, nullptr, tv_ptr);
+    const int rc = ::select(nfds, &rfds, nullptr, nullptr, &tv);
     if (rc < 0) {
       if (errno == EINTR) {
         continue;
@@ -501,36 +525,33 @@ void VescClient::io_loop() {
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
           break;
         }
-        if (n < 0) {
-          running_.store(false);
-        }
+        running_.store(false);
         break;
       }
     }
-
-    std::deque<std::vector<std::uint8_t>> commands;
-    {
-      std::lock_guard lock(scheduler_mutex_);
-      commands.swap(command_queue_);
-    }
-    // Drain queued control commands before issuing any new reply-bearing work so
-    // fire-and-forget actuation stays highest priority on the wire.
-    const bool wrote_all_commands = std::all_of(
-        commands.begin(), commands.end(),
-        [&](const std::vector<std::uint8_t>& command) { return write_packet(command); });
-    if (!wrote_all_commands) {
-      running_.store(false);
-      break;
-    }
-
-    handle_request_timeout();
 
     if (auto watchdog_command = dequeue_due_watchdog_command(SteadyClock::now())) {
       if (!write_packet(*watchdog_command)) {
         running_.store(false);
         break;
       }
+      continue;
     }
+
+    std::optional<std::vector<std::uint8_t>> command;
+    {
+      std::lock_guard lock(scheduler_mutex_);
+      if (!command_queue_.empty()) {
+        command = std::move(command_queue_.front());
+        command_queue_.pop_front();
+      }
+    }
+    if (command && !write_packet(*command)) {
+      running_.store(false);
+      break;
+    }
+
+    handle_request_timeout();
 
     bool has_in_flight = false;
     {
@@ -556,6 +577,9 @@ void VescClient::io_loop() {
 
     if (auto query = dequeue_ready_query(after_io)) {
       if (!write_packet(query->packet)) {
+        if (query->on_timeout) {
+          query->on_timeout();
+        }
         running_.store(false);
         break;
       }
@@ -565,6 +589,7 @@ void VescClient::io_loop() {
   }
 
   clear_pending_work();
+  active_io_client = nullptr;
 }
 
 void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns) {
@@ -573,35 +598,18 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
   }
 
   std::optional<ScheduledRequest> completed_request;
-  bool drop_stale_query_reply = false;
   {
     std::lock_guard lock(scheduler_mutex_);
-    // Timed-out blocking queries may still produce a late reply on the wire.
-    // Count and drop those replies so they cannot satisfy a newer query with
-    // the same expected packet ID.
-    auto stale_reply = stale_query_reply_counts_.find(payload[0]);
-    if (stale_reply != stale_query_reply_counts_.end()) {
-      if (stale_reply->second > 1) {
-        --stale_reply->second;
-      } else {
-        stale_query_reply_counts_.erase(stale_reply);
-      }
-      drop_stale_query_reply = true;
-    } else if (in_flight_request_ && in_flight_request_->expected_id == payload[0]) {
+    if (in_flight_request_ && in_flight_request_->expected_id == payload[0]) {
       completed_request = std::move(in_flight_request_);
       in_flight_request_.reset();
     }
   }
 
-  if (drop_stale_query_reply) {
-    return;
-  }
-
   if (completed_request) {
     if (completed_request->kind == ScheduledRequest::Kind::PollImu) {
-      if (auto data = io_protocol_.parse_get_imu_data(payload)) {
+      if (auto data = VescProtocol::parse_get_imu_data(payload)) {
         data->stamp_ns = stamp_ns;
-        imu_channel_.last_sample = SteadyClock::now();
         {
           std::lock_guard lock(cache_mutex_);
           imu_data_cache_ = *data;
@@ -612,9 +620,8 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
     }
 
     if (completed_request->kind == ScheduledRequest::Kind::PollMotorState) {
-      if (auto state = io_protocol_.parse_get_values(payload)) {
+      if (auto state = VescProtocol::parse_get_values(payload)) {
         state->stamp_ns = stamp_ns;
-        motor_channel_.last_sample = SteadyClock::now();
         {
           std::lock_guard lock(cache_mutex_);
           motor_state_cache_ = *state;
@@ -638,10 +645,6 @@ void VescClient::handle_request_timeout() {
     const auto now = SteadyClock::now();
     if (in_flight_request_ && in_flight_request_->deadline <= now) {
       timed_out = std::move(in_flight_request_);
-      if (timed_out->kind == ScheduledRequest::Kind::FwVersion) {
-        // Only a request that was actually sent can still yield a stale late reply.
-        ++stale_query_reply_counts_[timed_out->expected_id];
-      }
       in_flight_request_.reset();
     }
 
@@ -665,26 +668,23 @@ void VescClient::handle_request_timeout() {
   }
 }
 
-void VescClient::schedule_query(ScheduledRequest request) {
-  {
-    std::lock_guard lock(scheduler_mutex_);
-    request_queue_.push_back(std::move(request));
-  }
-  wake_io_thread();
-}
-
 bool VescClient::enqueue_control_command(std::vector<std::uint8_t> packet) {
-  {
-    std::lock_guard lock(scheduler_mutex_);
-    if (!running_.load()) {
-      return false;
-    }
-    if (control_watchdog_enabled()) {
-      control_watchdog_.deadline = SteadyClock::now() + config_.command_watchdog_timeout;
-      control_watchdog_.armed = true;
-    }
-    command_queue_.push_back(std::move(packet));
+  std::lock_guard lock(scheduler_mutex_);
+  if (!running_.load() || packet.size() < 3) {
+    return false;
   }
+  if (control_watchdog_enabled()) {
+    control_watchdog_.deadline = SteadyClock::now() + config_.command_watchdog_timeout;
+    control_watchdog_.armed = true;
+  }
+  const auto command_id = packet[2];
+  command_queue_.erase(
+      std::remove_if(command_queue_.begin(), command_queue_.end(),
+                     [command_id](const auto& queued) {
+                       return queued.size() >= 3 && queued[2] == command_id;
+                     }),
+      command_queue_.end());
+  command_queue_.push_back(std::move(packet));
   wake_io_thread();
   return true;
 }
@@ -718,14 +718,14 @@ VescClient::dequeue_due_watchdog_command(const SteadyClock::time_point& now) {
       return std::nullopt;
     }
     control_watchdog_ = ControlWatchdogState{};
+    command_queue_.clear();
   }
 
-  std::lock_guard lock(protocol_mutex_);
   if (config_.command_watchdog_action == ControlWatchdogAction::Coast) {
-    return cmd_protocol_.build_set_current_command(0.0f);
+    return VescProtocol::build_set_current_command(0.0f);
   }
   if (config_.command_watchdog_action == ControlWatchdogAction::BrakeCurrent) {
-    return cmd_protocol_.build_set_current_brake_command(
+    return VescProtocol::build_set_current_brake_command(
         clamp_brake_current(config_.command_watchdog_brake_current, config_.max_brake_current));
   }
   return std::nullopt;
@@ -740,6 +740,9 @@ void VescClient::wake_io_thread() const {
 }
 
 bool VescClient::write_packet(const std::vector<std::uint8_t>& pkt) {
+  if (pkt.empty()) {
+    return false;
+  }
   const std::uint8_t* cursor = pkt.data();
   std::size_t remaining = pkt.size();
 
@@ -841,7 +844,6 @@ void VescClient::clear_pending_work() {
     queued_requests.swap(request_queue_);
     in_flight = std::move(in_flight_request_);
     in_flight_request_.reset();
-    stale_query_reply_counts_.clear();
     control_watchdog_ = ControlWatchdogState{};
   }
 
@@ -865,15 +867,14 @@ VescClient::PollChannel* VescClient::select_due_poll_channel(const SteadyClock::
       continue;
     }
 
-    const auto due = channel->next_due.time_since_epoch().count() == 0 ? now : channel->next_due;
-    if (due > now) {
+    if (channel->next_due > now) {
       continue;
     }
 
-    if (!selected || due < selected_due ||
-        (due == selected_due && channel->kind == PollChannel::Kind::Imu)) {
+    if (!selected || channel->next_due < selected_due ||
+        (channel->next_due == selected_due && channel->kind == PollChannel::Kind::Imu)) {
       selected = channel;
-      selected_due = due;
+      selected_due = channel->next_due;
     }
   }
 
@@ -888,16 +889,11 @@ VescClient::make_due_poll_request(PollChannel& channel, const SteadyClock::time_
   }
 
   const auto interval = std::chrono::milliseconds(interval_ms);
-  if (channel.next_due.time_since_epoch().count() == 0) {
-    channel.next_due = now;
-  }
   if (channel.next_due > now) {
     return std::nullopt;
   }
 
-  while (channel.next_due <= now) {
-    channel.next_due += interval;
-  }
+  channel.next_due = now + interval;
 
   ScheduledRequest request;
   request.expected_id = static_cast<std::uint8_t>(channel.kind == PollChannel::Kind::Imu
@@ -907,10 +903,10 @@ VescClient::make_due_poll_request(PollChannel& channel, const SteadyClock::time_
 
   if (channel.kind == PollChannel::Kind::Imu) {
     request.kind = ScheduledRequest::Kind::PollImu;
-    request.packet = io_protocol_.build_get_imu_data_request();
+    request.packet = VescProtocol::build_get_imu_data_request();
   } else {
     request.kind = ScheduledRequest::Kind::PollMotorState;
-    request.packet = io_protocol_.build_get_values_request();
+    request.packet = VescProtocol::build_get_values_request();
   }
   return request;
 }
@@ -930,29 +926,17 @@ VescClient::dequeue_ready_query(const SteadyClock::time_point& now) {
       }
     }
     if (!request_queue_.empty()) {
-      // connect() seeds next_due before the I/O loop runs, so treating a zero epoch as
-      // "due now" here is only a fallback for partially initialized test setups.
-      const auto imu_next_due =
-          imu_channel_.next_due.time_since_epoch().count() == 0 ? now : imu_channel_.next_due;
-      const auto motor_next_due =
-          motor_channel_.next_due.time_since_epoch().count() == 0 ? now : motor_channel_.next_due;
-      const auto time_until_imu =
-          imu_channel_.interval_ms.load() > 0 ? imu_next_due - now : SteadyClock::duration::max();
+      const auto time_until_imu = imu_channel_.interval_ms.load() > 0
+                                      ? imu_channel_.next_due - now
+                                      : SteadyClock::duration::max();
       const auto time_until_motor = motor_channel_.interval_ms.load() > 0
-                                        ? motor_next_due - now
+                                        ? motor_channel_.next_due - now
                                         : SteadyClock::duration::max();
       const auto next_poll_due = std::min(time_until_imu, time_until_motor);
 
       if (next_poll_due > config_.query_guard_window) {
-        for (auto it = request_queue_.begin(); it != request_queue_.end(); ++it) {
-          if (stale_query_reply_counts_.count(it->expected_id) != 0U) {
-            // If a stale reply never arrives, the queued query still completes by expiry.
-            continue;
-          }
-          ready_query = std::move(*it);
-          request_queue_.erase(it);
-          break;
-        }
+        ready_query = std::move(request_queue_.front());
+        request_queue_.pop_front();
       }
     }
   }

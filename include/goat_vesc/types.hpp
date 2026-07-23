@@ -36,7 +36,7 @@ struct VescConfig {
   std::chrono::milliseconds motor_poll_interval{50};
   /** Periodic IMU polling cadence. `0 ms` disables IMU polling. */
   std::chrono::milliseconds imu_poll_interval{10};
-  /** Deadline for a sent poll or query to receive a reply. */
+  /** Deadline for a sent periodic poll to receive a reply. */
   std::chrono::milliseconds poll_response_timeout{20};
   /** Guard band that keeps one-shot queries from cutting too close to polls. */
   std::chrono::milliseconds query_guard_window{5};
@@ -64,7 +64,7 @@ struct VescClientConfigSnapshot {
   std::chrono::milliseconds motor_poll_interval{0};
   /** Current IMU polling cadence. */
   std::chrono::milliseconds imu_poll_interval{0};
-  /** Poll/query reply timeout. */
+  /** Periodic poll reply timeout. */
   std::chrono::milliseconds poll_response_timeout{0};
   /** Query guard window before a due periodic poll. */
   std::chrono::milliseconds query_guard_window{0};

@@ -14,6 +14,7 @@
 #include <exception>
 #include <iostream>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
@@ -83,6 +84,9 @@ void print_motor_state(const std::optional<VescMotorState>& state) {
 
 int main(int argc, char** argv) {
   try {
+    if (argc > 3) {
+      throw std::runtime_error("too many arguments");
+    }
     if (argc > 1) {
       const std::string arg1 = argv[1];
       if (arg1 == "-h" || arg1 == "--help") {
@@ -96,7 +100,12 @@ int main(int argc, char** argv) {
       config.device_path = argv[1];
     }
     if (argc > 2) {
-      config.baud = std::stoi(argv[2]);
+      const std::string baud_text = argv[2];
+      std::size_t consumed = 0;
+      config.baud = std::stoi(baud_text, &consumed);
+      if (consumed != baud_text.size()) {
+        throw std::runtime_error("invalid baud: " + baud_text);
+      }
     }
 
     config.imu_poll_interval = 20ms;

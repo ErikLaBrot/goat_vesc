@@ -11,7 +11,6 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -37,7 +36,7 @@ namespace goat_vesc {
  *
  * Scheduling model:
  * - Fire-and-forget control commands are highest priority.
- * - Periodic IMU polling is checked before motor-state polling.
+ * - The earliest due periodic poll runs next; IMU wins a tie.
  * - Only one reply-bearing request is allowed in flight at a time.
  *
  * Safety note:
@@ -57,8 +56,8 @@ public:
 
   /**
    * @brief RAII token for a subscription created by subscribe_imu() or
-   * subscribe_motor_state(). Destroying or resetting the handle unregisters the
-   * callback.
+   * subscribe_motor_state(). Destroying or resetting the handle unregisters
+   * future callback copies; a callback already copied for dispatch may still run.
    */
   class SubscriptionHandle {
   public:
@@ -82,7 +81,11 @@ public:
     /** @brief Unregisters the subscription if the handle still owns one. */
     ~SubscriptionHandle();
 
-    /** @brief Unregisters the subscription and makes the handle empty. */
+    /**
+     * @brief Unregisters the subscription and makes the handle empty.
+     *
+     * A callback already copied for dispatch may still run after this returns.
+     */
     void reset();
     /** @brief Returns `true` when the handle still owns a live subscription. */
     explicit operator bool() const {
@@ -130,6 +133,9 @@ public:
    * @brief Stops the background thread and closes the transport.
    *
    * Outstanding blocking queries are completed with `std::nullopt`.
+   * When called from a telemetry callback, shutdown is requested without
+   * joining the current I/O thread; a later external disconnect or destruction
+   * reclaims the transport handles.
    */
   void disconnect();
 
@@ -169,7 +175,10 @@ public:
   /**
    * @brief Registers a callback invoked whenever a fresh IMU sample is decoded.
    *
-   * The callback runs outside internal locks. Keep it lightweight.
+   * The callback runs on the I/O thread outside internal locks. Keep it short
+   * because it delays all transport work. Exceptions are ignored, and blocking
+   * queries return no result from a callback. Do not destroy the client from its
+   * callback.
    *
    * @param callback Function to invoke when a new IMU sample arrives.
    * @return RAII handle that unregisters the callback on destruction.
@@ -178,7 +187,10 @@ public:
   /**
    * @brief Registers a callback invoked whenever a fresh motor-state sample is decoded.
    *
-   * The callback runs outside internal locks. Keep it lightweight.
+   * The callback runs on the I/O thread outside internal locks. Keep it short
+   * because it delays all transport work. Exceptions are ignored, and blocking
+   * queries return no result from a callback. Do not destroy the client from its
+   * callback.
    *
    * @param callback Function to invoke when a new motor-state sample arrives.
    * @return RAII handle that unregisters the callback on destruction.
@@ -197,7 +209,7 @@ public:
   bool set_rpm(std::int32_t rpm);
   /**
    * @brief Enqueues a `COMM_SET_DUTY` command for transmission.
-   * @param duty Duty-cycle request, typically in the `[-1.0, 1.0]` range.
+   * @param duty Duty-cycle request in the `[-1.0, 1.0]` range.
    * @return `true` when the command remains deliverable after submission.
    */
   bool set_duty(float duty);
@@ -220,7 +232,7 @@ public:
   bool set_current_brake(float amps);
   /**
    * @brief Enqueues a `COMM_SET_SERVO_POS` command for transmission.
-   * @param position Servo position in controller-specific normalized units.
+   * @param position Servo position in the `[0.0, 1.0]` range.
    * @return `true` when the command remains deliverable after submission.
    */
   bool set_servo_pos(float position);
@@ -251,8 +263,8 @@ private:
 
     Kind kind;
     std::atomic<std::int64_t> interval_ms{0};
+    std::atomic<bool> reschedule{false};
     SteadyClock::time_point next_due{};
-    SteadyClock::time_point last_sample{};
   };
 
   struct ScheduledRequest {
@@ -279,22 +291,19 @@ private:
   };
 
   VescConfig config_;
+  std::mutex lifecycle_mutex_;
   int fd_{-1};
   int wake_pipe_[2]{-1, -1};
 
-  VescProtocol io_protocol_;
-  VescProtocol cmd_protocol_;
   VescPacketParser parser_;
 
   std::thread io_thread_;
   std::atomic<bool> running_{false};
 
-  std::mutex protocol_mutex_;
   std::mutex scheduler_mutex_;
   std::deque<std::vector<std::uint8_t>> command_queue_;
   std::deque<ScheduledRequest> request_queue_;
   std::optional<ScheduledRequest> in_flight_request_;
-  std::unordered_map<std::uint8_t, std::size_t> stale_query_reply_counts_;
   ControlWatchdogState control_watchdog_;
 
   mutable std::mutex cache_mutex_;
@@ -306,18 +315,17 @@ private:
   PollChannel imu_channel_{PollChannel::Kind::Imu};
   PollChannel motor_channel_{PollChannel::Kind::MotorState};
 
-  static std::uint64_t default_wall_time_ns();
   std::uint64_t wall_time_ns() const;
 
   void io_loop();
   void dispatch_payload(const Payload& payload, std::uint64_t stamp_ns);
   void handle_request_timeout();
-  void schedule_query(ScheduledRequest request);
 
   bool enqueue_control_command(std::vector<std::uint8_t> packet);
   bool control_watchdog_enabled() const;
   std::optional<std::vector<std::uint8_t>>
   dequeue_due_watchdog_command(const SteadyClock::time_point& now);
+  /** Caller holds scheduler_mutex_. */
   void wake_io_thread() const;
   bool write_packet(const std::vector<std::uint8_t>& pkt);
   bool wait_until_writable();
@@ -331,9 +339,7 @@ private:
                                                         const SteadyClock::time_point& now);
   std::optional<ScheduledRequest> dequeue_ready_query(const SteadyClock::time_point& now);
 
-#ifdef GOAT_VESC_TESTING
   friend struct VescClientTestAccess;
-#endif
 };
 
 } // namespace goat_vesc

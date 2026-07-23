@@ -24,11 +24,11 @@ WARN_AS_ERROR          = FAIL_ON_WARNINGS
 QUIET                  = YES
 RECURSIVE              = YES
 FILE_PATTERNS          = *.hpp *.md
-INPUT                  = @CMAKE_SOURCE_DIR@/README.md \
-                         @CMAKE_SOURCE_DIR@/docs/src \
-                         @CMAKE_SOURCE_DIR@/include
-USE_MDFILE_AS_MAINPAGE = @CMAKE_SOURCE_DIR@/README.md
-STRIP_FROM_PATH        = @CMAKE_SOURCE_DIR@
+INPUT                  = @PROJECT_SOURCE_DIR@/README.md \
+                         @PROJECT_SOURCE_DIR@/docs/src \
+                         @PROJECT_SOURCE_DIR@/include
+USE_MDFILE_AS_MAINPAGE = @PROJECT_SOURCE_DIR@/README.md
+STRIP_FROM_PATH        = @PROJECT_SOURCE_DIR@
 GENERATE_HTML          = YES
 GENERATE_LATEX         = NO
 GENERATE_MAN           = NO

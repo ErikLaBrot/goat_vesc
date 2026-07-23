@@ -11,7 +11,7 @@ shape the implementation.
 on a single background thread. Public methods can be called from multiple
 threads, but they do not write directly to the file descriptor. Instead they:
 
-- build packets under `protocol_mutex_`
+- build packets with stateless protocol helpers
 - hand queued work to the scheduler under `scheduler_mutex_`
 - wake the transport thread through `wake_pipe_`
 
@@ -28,24 +28,29 @@ The I/O loop handles three categories of work:
 
 The scheduler enforces one in-flight reply-bearing request at a time so replies
 can be matched by expected packet ID without a more complicated correlator.
-Control commands have priority over polls and queries. Polls are scheduled from
-their own channels, and IMU polling wins ties over motor-state polling.
+Control commands have priority over polls and queries. The queue retains only
+the newest pending command for each command ID, and the I/O loop writes at most
+one queued command per pass so reply timeouts and polls still progress. Polls
+are scheduled from their own channels, and IMU polling wins ties over
+motor-state polling.
 
 One-shot queries are delayed or timed out rather than allowed to permanently
-disturb periodic polling. Late replies from timed-out blocking queries are
-counted and dropped so a stale response cannot satisfy a newer request.
+disturb periodic polling. Firmware version is the only blocking query currently
+supported and is stable during an owned connection, so a late firmware reply is
+equivalent to a reply to a newer firmware query.
 
 ## Protocol Layering
 
-The wire-format code is split into three public pieces:
+The wire-format code is split into two public pieces:
 
-- `VescPacketBuilder` serializes typed integer fields into payload bytes
 - `VescPacketParser` consumes raw bytes and emits validated payload frames
-- `VescProtocol` builds typed requests and parses typed responses
+- `VescProtocol` serializes and frames typed requests, then parses typed responses
 
 `VescClient` depends on these pieces but does not own the byte-layout details of
 individual messages. That separation keeps transport logic independent from
-packet layout and message semantics.
+packet layout and message semantics. VESC framing does not escape length bytes,
+so a corrupted length can consume later frames within one declared candidate
+before a subsequent frame restores parser synchronization.
 
 ## Watchdog and Safety Model
 
@@ -59,7 +64,8 @@ chosen by configuration:
 
 The watchdog is intentionally one-shot. It does not replace VESC-side timeout
 configuration, and it cannot send a final command after the transport has
-already failed.
+already failed. When it fires, it discards pending stale control commands before
+writing the configured safe-stop command.
 
 ## Caches and Callbacks
 
@@ -71,7 +77,12 @@ cache lock. This gives callers two access patterns:
 - push-based updates through subscriptions
 
 Callbacks are copied out of the registry before invocation so user code does not
-run while the registry mutex is held.
+run while the registry mutex is held. They run on the I/O thread: exceptions are
+ignored per subscriber, blocking queries fail immediately, and callback-initiated
+disconnect requests stop the loop without attempting to join the current
+thread. Slow callbacks delay all transport work, a copied callback may run once
+after its subscription resets, and the client must not be destroyed from its own
+callback.
 
 ## Runtime Configuration Boundary
 
@@ -80,7 +91,7 @@ the transport layer. The caller decides:
 
 - device path and baud
 - IMU and motor polling cadence
-- reply timeout and query guard window
+- periodic-poll reply timeout and query guard window
 - optional watchdog behavior and brake-current limits
 - optional timestamp and transport hooks for tests or alternate backends
 

@@ -38,18 +38,18 @@ pin one.
 | Layer | Responsibility | Location |
 |---|---|---|
 | Public contract | Consumer-facing configuration, data types, lifecycle, control, telemetry, and query APIs | [`include/goat_vesc/`](../../include/goat_vesc/) |
-| Packet framing | Integral field serialization, frame boundaries, CRC validation, and byte-stream resynchronization | [`packet_builder.cpp`](../../src/packet_builder.cpp), [`packet_parser.cpp`](../../src/packet_parser.cpp) |
+| Packet framing | Integral field serialization, frame boundaries, CRC validation, and byte-stream resynchronization | [`protocol.cpp`](../../src/protocol.cpp), [`packet_parser.cpp`](../../src/packet_parser.cpp) |
 | Message protocol | Command IDs, field masks, scaling, and typed request/response encoding | [`protocol_ids.hpp`](../../include/goat_vesc/protocol_ids.hpp), [`protocol.cpp`](../../src/protocol.cpp) |
 | Transport and scheduling | Serial lifecycle, work arbitration, timeouts, reply matching, caches, callbacks, and shutdown | [`vesc_client.cpp`](../../src/vesc_client.cpp) |
 | Automated evidence | Exact wire-format tests and fake-transport lifecycle, concurrency, and failure tests | [`test_protocol.cpp`](../../tests/test_protocol.cpp), [`test_client.cpp`](../../tests/test_client.cpp) |
-| Manual validation | Operator-visible probe, sweep, and hardware smoke workflows | [`examples/`](../../examples/), [`scripts/`](../../scripts/) |
+| Manual validation | Operator-visible probe and explicitly armed hardware smoke workflows | [`examples/`](../../examples/) |
 
 ## Operation Lifecycles
 
 | Operation | Lifecycle |
 |---|---|
-| Control command | A public method encodes a packet under the protocol lock and submits it to the command queue. Control commands have scheduler priority, and the I/O thread writes them without tracking a reply. Accepted control commands refresh the optional watchdog. |
-| One-shot query | Each request carries an absolute deadline from submission; the request queue holds the packet, expected reply ID, and completion callbacks. Only one reply-bearing request is in flight. A matching reply completes it, while queued or in-flight requests can expire. The current firmware query also tracks and discards a late reply after timeout. |
+| Control command | A public method validates and encodes a packet, then replaces any older queued command with the same command ID. The I/O thread writes at most one command per scheduler pass without tracking a reply. Accepted commands refresh the optional watchdog. |
+| One-shot query | Each request carries an absolute deadline from submission; the request queue holds the packet, expected reply ID, and completion callbacks. Only one reply-bearing request is in flight. A matching reply completes it, while queued or in-flight requests can expire. Firmware version is stable during a connection, so a late firmware reply is still semantically valid. |
 | Periodic telemetry | IMU and motor-state poll channels become due independently. The scheduler sends a poll when no reply-bearing request is in flight, then the I/O thread decodes and timestamps the reply, updates the latest-value cache, and publishes callbacks outside internal locks. IMU wins a tie between due channels. |
 
 All transport traffic converges on the same I/O thread and packet parser.
@@ -64,13 +64,15 @@ watchdog, cache, and callback model.
 - At most one reply-bearing request is in flight, so replies can be matched by
   expected packet ID.
 - Control commands take priority over periodic polls and diagnostic queries.
-- User callbacks run outside cache and registry locks and should remain
-  lightweight.
+- User callbacks run on the I/O thread outside cache and registry locks.
+  They must remain short and must not destroy the client. Exceptions are
+  ignored; blocking queries fail immediately from a callback, and a callback
+  already copied for dispatch may run once after unsubscription.
 - Subscription handles may outlive client shutdown without accessing destroyed
   client state.
-- The optional host watchdog is one-shot, disabled by default, and cannot stop
-  hardware after transport loss. VESC-side timeout configuration remains the
-  backstop.
+- The optional host watchdog is one-shot and disabled by default. It discards
+  pending stale commands before its safe-stop write, but cannot stop hardware
+  after transport loss. VESC-side timeout configuration remains the backstop.
 - Repository automation must not touch real VESC hardware. Hardware access and
   actuator commands require explicit authorization.
 

@@ -15,7 +15,10 @@ namespace goat_vesc {
  * @brief Incrementally decodes framed VESC packets from a byte stream.
  *
  * The parser owns an internal buffer and can be fed one byte at a time or in
- * batches. It validates framing and CRC before returning a payload.
+ * batches. It validates framing and CRC before returning a payload. Because
+ * length bytes are not escaped, a corrupted length may consume later frames
+ * within one declared candidate before a subsequent frame restores
+ * synchronization.
  */
 class VescPacketParser {
 public:
@@ -44,9 +47,9 @@ public:
 private:
   std::vector<std::uint8_t> buffer_;
 
-  enum class DecodeResult { Success, NeedMoreData, Invalid };
+  enum class DecodeResult { Success, NeedMoreData, InvalidHeader, InvalidPacket };
 
-  DecodeResult try_decode_packet_(Payload& payload_out, std::size_t& discard_bytes_out);
+  DecodeResult try_decode_packet_(Payload& payload_out, std::size_t& packet_size_out) const;
   static std::uint16_t crc16ccitt_(const std::vector<std::uint8_t>& data) noexcept;
 };
 
