@@ -1,4 +1,4 @@
-# goat_vesc Change Guide
+# goat_motor_controller Change Guide
 
 Read the [AI context index](README.md) first. Keep changes at the shared layer
 that owns the behavior, then update its executable evidence and affected
@@ -9,11 +9,11 @@ documentation.
 | Change | Primary locations | Evidence and context |
 |---|---|---|
 | Packet framing, CRC, resynchronization | [`protocol.cpp`](../../src/protocol.cpp), [`packet_parser.cpp`](../../src/packet_parser.cpp) | [`test_protocol.cpp`](../../tests/test_protocol.cpp) |
-| Message IDs, masks, typed payloads | [`protocol_ids.hpp`](../../include/goat_vesc/protocol_ids.hpp), [`types.hpp`](../../include/goat_vesc/types.hpp), [`protocol.cpp`](../../src/protocol.cpp) | [`test_protocol.cpp`](../../tests/test_protocol.cpp), [readiness checklist](../src/BRIDGE_READINESS_CHECKLIST.md) |
-| Transport lifecycle, scheduling, polling, queries | [`vesc_client.hpp`](../../include/goat_vesc/vesc_client.hpp), [`vesc_client.cpp`](../../src/vesc_client.cpp) | [`test_client.cpp`](../../tests/test_client.cpp), [architecture notes](../src/ARCHITECTURE.md) |
-| Motor/app configuration or LispBM transfer | [`vesc_protocol.hpp`](../../include/goat_vesc/vesc_protocol.hpp), [`vesc_client.cpp`](../../src/vesc_client.cpp) | Verify layouts against the deployed [`vedderb/bldc`](https://github.com/vedderb/bldc) version; cover exact packets and fake-device transactions |
-| FOC calibration or application-output suppression | [`types.hpp`](../../include/goat_vesc/types.hpp), [`vesc_protocol.hpp`](../../include/goat_vesc/vesc_protocol.hpp), [`vesc_client.cpp`](../../src/vesc_client.cpp) | Firmware 7.00 `COMM_DETECT_APPLY_ALL_FOC` and `COMM_APP_DISABLE_OUTPUT`, pinned to [`vedderb/bldc` `9ff7e2e`](https://github.com/vedderb/bldc/blob/9ff7e2ef1d3a507e588eeca3fa05516d642f0e35/comm/commands.c); cover exact packets, suppression order, raw results, timeout disconnect, and polling recovery |
-| Watchdog, braking, callbacks, shutdown safety | [`types.hpp`](../../include/goat_vesc/types.hpp), [`vesc_client.cpp`](../../src/vesc_client.cpp) | [`test_client.cpp`](../../tests/test_client.cpp), [architecture notes](../src/ARCHITECTURE.md) |
+| Message IDs, masks, typed payloads | [`protocol_ids.hpp`](../../include/goat_motor_controller/protocol_ids.hpp), [`types.hpp`](../../include/goat_motor_controller/types.hpp), [`protocol.cpp`](../../src/protocol.cpp) | [`test_protocol.cpp`](../../tests/test_protocol.cpp), [readiness checklist](../src/BRIDGE_READINESS_CHECKLIST.md) |
+| Transport lifecycle, scheduling, polling, queries | [`controller_client.hpp`](../../include/goat_motor_controller/controller_client.hpp), [`controller_client.cpp`](../../src/controller_client.cpp) | [`test_client.cpp`](../../tests/test_client.cpp), [architecture notes](../src/ARCHITECTURE.md) |
+| Motor/app configuration or LispBM transfer | [`controller_protocol.hpp`](../../include/goat_motor_controller/controller_protocol.hpp), [`controller_client.cpp`](../../src/controller_client.cpp) | Verify layouts against the deployed [`vedderb/bldc`](https://github.com/vedderb/bldc) version; cover exact packets and fake-device transactions |
+| FOC calibration or application-output suppression | [`types.hpp`](../../include/goat_motor_controller/types.hpp), [`controller_protocol.hpp`](../../include/goat_motor_controller/controller_protocol.hpp), [`controller_client.cpp`](../../src/controller_client.cpp) | Firmware 7.00 `COMM_DETECT_APPLY_ALL_FOC` and `COMM_APP_DISABLE_OUTPUT`, pinned to [`vedderb/bldc` `9ff7e2e`](https://github.com/vedderb/bldc/blob/9ff7e2ef1d3a507e588eeca3fa05516d642f0e35/comm/commands.c); cover exact packets, suppression order, raw results, timeout disconnect, and polling recovery |
+| Watchdog, braking, callbacks, shutdown safety | [`types.hpp`](../../include/goat_motor_controller/types.hpp), [`controller_client.cpp`](../../src/controller_client.cpp) | [`test_client.cpp`](../../tests/test_client.cpp), [architecture notes](../src/ARCHITECTURE.md) |
 | Build, install, and exported package | [`CMakeLists.txt`](../../CMakeLists.txt), [`cmake/`](../../cmake/), [`package.xml`](../../package.xml) | [README install flow](../../README.md#installed-surface) |
 | Operator or hardware workflow | [`examples/`](../../examples/) | [operator quick reference](../src/OPERATOR_QUICK_REFERENCE.md); manual validation only |
 
@@ -56,7 +56,7 @@ controller.
 
 ## Hardware Boundary
 
-Do not run examples against a VESC unless the user explicitly
+Do not run examples against controller hardware unless the user explicitly
 authorizes hardware access and identifies the target. Treat actuator arming as
 a separate consequential action requiring explicit authorization. Start with
 the non-actuating probe when that is sufficient; use the smoke tool's actuator

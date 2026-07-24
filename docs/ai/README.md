@@ -1,20 +1,20 @@
-# goat_vesc AI Context
+# goat_motor_controller AI Context
 
-This is the entry point for coding agents changing `goat_vesc`. It supplies
+This is the entry point for coding agents changing `goat_motor_controller`. It supplies
 repository context and routes readers to the existing API and operator
 documentation rather than repeating it.
 
 ## Project Boundary
 
-`goat_vesc` is a C++17 library that owns one VESC serial transport, translates
-between typed values and VESC packets, schedules telemetry and diagnostic
+`goat_motor_controller` is a C++17 library that owns one controller serial
+transport, translates between typed values and firmware packets, schedules telemetry and diagnostic
 requests, and exposes cached or callback-based telemetry. It installs as a
 reusable CMake package for higher-level GOAT applications.
 
 This repository does not own:
 
 - the ROS adapter or application-level control policy
-- VESC firmware, operator calibration policy, or schema-level interpretation
+- controller firmware, operator calibration policy, or schema-level interpretation
   of controller configurations
 - selection or coordination of multiple processes competing for one controller
 
@@ -23,8 +23,8 @@ surface and install contract.
 
 ## Protocol Authority
 
-`goat_vesc` independently implements a supported subset of the VESC serial
-`COMM_*` protocol defined by the upstream
+`goat_motor_controller` independently implements the required subset of the
+VESC serial `COMM_*` protocol defined by the upstream
 [`vedderb/bldc`](https://github.com/vedderb/bldc) firmware. It does not build or
 link against that firmware.
 
@@ -38,10 +38,10 @@ names a pinned upstream revision where the implementation requires one.
 
 | Layer | Responsibility | Location |
 |---|---|---|
-| Public contract | Consumer-facing configuration, data types, lifecycle, control, telemetry, and query APIs | [`include/goat_vesc/`](../../include/goat_vesc/) |
+| Public contract | Consumer-facing configuration, data types, lifecycle, control, telemetry, and query APIs | [`include/goat_motor_controller/`](../../include/goat_motor_controller/) |
 | Packet framing | Integral field serialization, frame boundaries, CRC validation, and byte-stream resynchronization | [`protocol.cpp`](../../src/protocol.cpp), [`packet_parser.cpp`](../../src/packet_parser.cpp) |
-| Message protocol | Command IDs, field masks, scaling, and typed request/response encoding | [`protocol_ids.hpp`](../../include/goat_vesc/protocol_ids.hpp), [`protocol.cpp`](../../src/protocol.cpp) |
-| Transport and scheduling | Serial lifecycle, work arbitration, timeouts, reply matching, caches, callbacks, and shutdown | [`vesc_client.cpp`](../../src/vesc_client.cpp) |
+| Message protocol | Command IDs, field masks, scaling, and typed request/response encoding | [`protocol_ids.hpp`](../../include/goat_motor_controller/protocol_ids.hpp), [`protocol.cpp`](../../src/protocol.cpp) |
+| Transport and scheduling | Serial lifecycle, work arbitration, timeouts, reply matching, caches, callbacks, and shutdown | [`controller_client.cpp`](../../src/controller_client.cpp) |
 | Automated evidence | Exact wire-format tests and fake-transport lifecycle, concurrency, and failure tests | [`test_protocol.cpp`](../../tests/test_protocol.cpp), [`test_client.cpp`](../../tests/test_client.cpp) |
 | Manual validation | Operator-visible probe and explicitly armed hardware smoke workflows | [`examples/`](../../examples/) |
 
@@ -62,7 +62,7 @@ watchdog, cache, and callback model.
 
 ## Invariants To Preserve
 
-- One active process owns a controller transport; inside `VescClient`, one I/O
+- One active process owns a controller transport; inside `ControllerClient`, one I/O
   thread performs all serial reads and writes.
 - At most one reply-bearing request is in flight, so replies can be matched by
   expected packet ID.
@@ -83,13 +83,13 @@ watchdog, cache, and callback model.
   client state.
 - The optional host watchdog is one-shot and disabled by default. It discards
   pending stale commands before its safe-stop write, but cannot stop hardware
-  after transport loss. VESC-side timeout configuration remains the backstop.
-- Repository automation must not touch real VESC hardware. Hardware access and
+  after transport loss. Firmware-side timeout configuration remains the backstop.
+- Repository automation must not touch real controller hardware. Hardware access and
   actuator commands require explicit authorization.
 
 ## Sources Of Truth
 
-- Public contract: [`include/goat_vesc/`](../../include/goat_vesc/)
+- Public contract: [`include/goat_motor_controller/`](../../include/goat_motor_controller/)
 - Runtime behavior: [`src/`](../../src/)
 - Executable evidence: [`tests/`](../../tests/)
 - Bridge-v1 requirements and status:

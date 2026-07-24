@@ -1,4 +1,4 @@
-# goat_vesc Agent Guidance
+# goat_motor_controller Agent Guidance
 
 Read the [AI context index](docs/ai/README.md) before changing this repository.
 
@@ -6,5 +6,5 @@ Read the [AI context index](docs/ai/README.md) before changing this repository.
 - Trace all callers before changing shared protocol, scheduling, or safety code.
 - Run the configured build and automated tests described in the
   [change guide](docs/ai/CHANGE_GUIDE.md).
-- Do not connect to VESC hardware or run hardware tools without explicit
+- Do not connect to controller hardware or run hardware tools without explicit
   authorization. Actuator commands require separate explicit authorization.

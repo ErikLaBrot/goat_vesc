@@ -1,13 +1,13 @@
-# goat_vesc Architecture Notes
+# goat_motor_controller Architecture Notes
 
 This document is the implementation-side companion to the public API docs for
-the GOAT racer VESC transport layer. The public headers describe what the
+the GOAT racer motor-controller transport layer. The public headers describe what the
 library exposes. This page explains the core subsystems and the invariants that
 shape the implementation.
 
 ## Transport Ownership
 
-`goat_vesc::VescClient` owns the serial transport and keeps all reads and writes
+`goat_motor_controller::ControllerClient` owns the serial transport and keeps all reads and writes
 on a single background thread. Public methods can be called from multiple
 threads, but they do not write directly to the file descriptor. Instead they:
 
@@ -74,12 +74,12 @@ queues an explicit zero-duration command to reenable application output.
 
 The wire-format code is split into two public pieces:
 
-- `VescPacketParser` consumes raw bytes and emits validated payload frames
-- `VescProtocol` serializes and frames typed requests, then parses typed responses
+- `PacketParser` consumes raw bytes and emits validated payload frames
+- `ControllerProtocol` serializes and frames typed requests, then parses typed responses
 
-`VescClient` depends on these pieces but does not own the byte-layout details of
+`ControllerClient` depends on these pieces but does not own the byte-layout details of
 individual messages. That separation keeps transport logic independent from
-packet layout and message semantics. VESC framing does not escape length bytes,
+packet layout and message semantics. The firmware framing does not escape length bytes,
 so a corrupted length can consume later frames within one declared candidate
 before a subsequent frame restores parser synchronization.
 
@@ -93,7 +93,7 @@ chosen by configuration:
 - coast by commanding zero current
 - active brake by commanding bounded brake current
 
-The watchdog is intentionally one-shot. It does not replace VESC-side timeout
+The watchdog is intentionally one-shot. It does not replace firmware-side timeout
 configuration, and it cannot send a final command after the transport has
 already failed. When it fires, it discards pending stale control commands before
 writing the configured safe-stop command.
@@ -117,7 +117,7 @@ callback.
 
 ## Runtime Configuration Boundary
 
-`VescConfig` provides the runtime boundary between higher-level applications and
+`ControllerConfig` provides the runtime boundary between higher-level applications and
 the transport layer. The caller decides:
 
 - device path and baud

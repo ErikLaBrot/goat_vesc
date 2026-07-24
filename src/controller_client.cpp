@@ -1,4 +1,4 @@
-#include "goat_vesc/vesc_client.hpp"
+#include "goat_motor_controller/controller_client.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -12,7 +12,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-namespace goat_vesc {
+namespace goat_motor_controller {
 
 namespace {
 using SteadyClock = std::chrono::steady_clock;
@@ -23,7 +23,7 @@ constexpr std::uint32_t kLispReadChunkBytes = 400;
 constexpr std::size_t kLispWriteChunkBytes = 384;
 constexpr std::uint32_t kEmptyLispEraseBytes = 16;
 constexpr std::uint32_t kLispEraseMarginBytes = 100;
-thread_local VescClient* active_io_client = nullptr;
+thread_local ControllerClient* active_io_client = nullptr;
 
 int baud_to_constant(int baud) {
   switch (baud) {
@@ -136,14 +136,14 @@ bool same_config_signature(const std::vector<std::uint8_t>& lhs,
 
 } // namespace
 
-VescClient::SubscriptionHandle::SubscriptionHandle(std::function<void()> unsubscribe)
+ControllerClient::SubscriptionHandle::SubscriptionHandle(std::function<void()> unsubscribe)
     : unsubscribe_(std::move(unsubscribe)) {}
 
-VescClient::SubscriptionHandle::SubscriptionHandle(SubscriptionHandle&& other) noexcept
+ControllerClient::SubscriptionHandle::SubscriptionHandle(SubscriptionHandle&& other) noexcept
     : unsubscribe_(std::move(other.unsubscribe_)) {}
 
-VescClient::SubscriptionHandle&
-VescClient::SubscriptionHandle::operator=(SubscriptionHandle&& other) noexcept {
+ControllerClient::SubscriptionHandle&
+ControllerClient::SubscriptionHandle::operator=(SubscriptionHandle&& other) noexcept {
   if (this != &other) {
     reset();
     unsubscribe_ = std::move(other.unsubscribe_);
@@ -151,18 +151,18 @@ VescClient::SubscriptionHandle::operator=(SubscriptionHandle&& other) noexcept {
   return *this;
 }
 
-VescClient::SubscriptionHandle::~SubscriptionHandle() {
+ControllerClient::SubscriptionHandle::~SubscriptionHandle() {
   reset();
 }
 
-void VescClient::SubscriptionHandle::reset() {
+void ControllerClient::SubscriptionHandle::reset() {
   if (unsubscribe_) {
     unsubscribe_();
     unsubscribe_ = nullptr;
   }
 }
 
-std::vector<std::string> VescClient::find_devices() {
+std::vector<std::string> ControllerClient::find_devices() {
   ::glob_t g{};
   std::vector<std::string> result;
   if (::glob("/dev/ttyACM*", 0, nullptr, &g) == 0) {
@@ -174,17 +174,17 @@ std::vector<std::string> VescClient::find_devices() {
   return result;
 }
 
-VescClient::VescClient(VescConfig config)
+ControllerClient::ControllerClient(ControllerConfig config)
     : config_(std::move(config)), callback_registry_(std::make_shared<CallbackRegistry>()) {
   imu_channel_.interval_ms.store(std::max<std::int64_t>(config_.imu_poll_interval.count(), 0));
   motor_channel_.interval_ms.store(std::max<std::int64_t>(config_.motor_poll_interval.count(), 0));
 }
 
-VescClient::~VescClient() {
+ControllerClient::~ControllerClient() {
   disconnect();
 }
 
-bool VescClient::connect() {
+bool ControllerClient::connect() {
   if (active_io_client == this) {
     return running_.load();
   }
@@ -253,7 +253,7 @@ bool VescClient::connect() {
 
   running_.store(true);
   try {
-    io_thread_ = std::thread(&VescClient::io_loop, this);
+    io_thread_ = std::thread(&ControllerClient::io_loop, this);
   } catch (...) {
     running_.store(false);
     cleanup_transport_state();
@@ -262,7 +262,7 @@ bool VescClient::connect() {
   return true;
 }
 
-void VescClient::disconnect() {
+void ControllerClient::disconnect() {
   if (active_io_client == this) {
     std::lock_guard lock(scheduler_mutex_);
     running_.store(false);
@@ -279,7 +279,7 @@ void VescClient::disconnect() {
   cleanup_transport_state();
 }
 
-void VescClient::cleanup_transport_state() {
+void ControllerClient::cleanup_transport_state() {
   if (io_thread_.joinable()) {
     io_thread_.join();
   }
@@ -300,11 +300,11 @@ void VescClient::cleanup_transport_state() {
   }
 }
 
-bool VescClient::is_connected() const {
+bool ControllerClient::is_connected() const {
   return running_.load();
 }
 
-void VescClient::set_motor_poll_interval(std::chrono::milliseconds interval) {
+void ControllerClient::set_motor_poll_interval(std::chrono::milliseconds interval) {
   std::lock_guard lock(scheduler_mutex_);
   motor_channel_.interval_ms.store(std::max<std::int64_t>(interval.count(), 0));
   motor_channel_.reschedule.store(true);
@@ -313,7 +313,7 @@ void VescClient::set_motor_poll_interval(std::chrono::milliseconds interval) {
   }
 }
 
-void VescClient::set_imu_poll_interval(std::chrono::milliseconds interval) {
+void ControllerClient::set_imu_poll_interval(std::chrono::milliseconds interval) {
   std::lock_guard lock(scheduler_mutex_);
   imu_channel_.interval_ms.store(std::max<std::int64_t>(interval.count(), 0));
   imu_channel_.reschedule.store(true);
@@ -322,8 +322,8 @@ void VescClient::set_imu_poll_interval(std::chrono::milliseconds interval) {
   }
 }
 
-VescClientConfigSnapshot VescClient::config_snapshot() const {
-  VescClientConfigSnapshot snapshot;
+ControllerConfigSnapshot ControllerClient::config_snapshot() const {
+  ControllerConfigSnapshot snapshot;
   snapshot.motor_poll_interval = std::chrono::milliseconds(motor_channel_.interval_ms.load());
   snapshot.imu_poll_interval = std::chrono::milliseconds(imu_channel_.interval_ms.load());
   snapshot.poll_response_timeout = config_.poll_response_timeout;
@@ -335,17 +335,17 @@ VescClientConfigSnapshot VescClient::config_snapshot() const {
   return snapshot;
 }
 
-std::optional<VescMotorState> VescClient::latest_motor_state() const {
+std::optional<MotorState> ControllerClient::latest_motor_state() const {
   std::lock_guard lock(cache_mutex_);
   return motor_state_cache_;
 }
 
-std::optional<VescIMUData> VescClient::latest_imu() const {
+std::optional<ImuData> ControllerClient::latest_imu() const {
   std::lock_guard lock(cache_mutex_);
   return imu_data_cache_;
 }
 
-VescClient::SubscriptionHandle VescClient::subscribe_imu(ImuCallback callback) {
+ControllerClient::SubscriptionHandle ControllerClient::subscribe_imu(ImuCallback callback) {
   const auto callbacks = callback_registry_;
   std::lock_guard callbacks_lock(callbacks->mutex);
   const std::size_t id = callbacks->next_subscription_id++;
@@ -356,7 +356,7 @@ VescClient::SubscriptionHandle VescClient::subscribe_imu(ImuCallback callback) {
   });
 }
 
-VescClient::SubscriptionHandle VescClient::subscribe_motor_state(MotorStateCallback callback) {
+ControllerClient::SubscriptionHandle ControllerClient::subscribe_motor_state(MotorStateCallback callback) {
   const auto callbacks = callback_registry_;
   std::lock_guard callbacks_lock(callbacks->mutex);
   const std::size_t id = callbacks->next_subscription_id++;
@@ -367,44 +367,44 @@ VescClient::SubscriptionHandle VescClient::subscribe_motor_state(MotorStateCallb
   });
 }
 
-bool VescClient::set_rpm(std::int32_t rpm) {
-  return enqueue_control_command(VescProtocol::build_set_rpm_command(rpm));
+bool ControllerClient::set_rpm(std::int32_t rpm) {
+  return enqueue_control_command(ControllerProtocol::build_set_rpm_command(rpm));
 }
 
-bool VescClient::set_duty(float duty) {
-  return enqueue_control_command(VescProtocol::build_set_duty_command(duty));
+bool ControllerClient::set_duty(float duty) {
+  return enqueue_control_command(ControllerProtocol::build_set_duty_command(duty));
 }
 
-bool VescClient::set_current(float amps) {
-  return enqueue_control_command(VescProtocol::build_set_current_command(amps));
+bool ControllerClient::set_current(float amps) {
+  return enqueue_control_command(ControllerProtocol::build_set_current_command(amps));
 }
 
-bool VescClient::set_current_brake(float amps) {
+bool ControllerClient::set_current_brake(float amps) {
   const float clamped_amps = clamp_brake_current(amps, config_.max_brake_current);
   if (clamped_amps <= 0.0f) {
     return false;
   }
 
-  return enqueue_control_command(VescProtocol::build_set_current_brake_command(clamped_amps));
+  return enqueue_control_command(ControllerProtocol::build_set_current_brake_command(clamped_amps));
 }
 
-bool VescClient::set_servo_pos(float position) {
-  return enqueue_control_command(VescProtocol::build_set_servo_pos_command(position));
+bool ControllerClient::set_servo_pos(float position) {
+  return enqueue_control_command(ControllerProtocol::build_set_servo_pos_command(position));
 }
 
-std::optional<FwVersion> VescClient::request_fw_version(std::chrono::milliseconds timeout) {
+std::optional<FwVersion> ControllerClient::request_fw_version(std::chrono::milliseconds timeout) {
   if (timeout <= std::chrono::milliseconds::zero()) {
     return std::nullopt;
   }
 
   const auto payload =
-      request_payload(VescProtocol::build_fw_version_request(), VescPacketCommID::FwVersion,
+      request_payload(ControllerProtocol::build_fw_version_request(), CommandId::FwVersion,
                       SteadyClock::now() + timeout, false);
-  return payload ? VescProtocol::parse_fw_version(*payload) : std::nullopt;
+  return payload ? ControllerProtocol::parse_fw_version(*payload) : std::nullopt;
 }
 
-std::optional<VescClient::Payload>
-VescClient::request_payload(std::vector<std::uint8_t> packet, VescPacketCommID expected_id,
+std::optional<ControllerClient::Payload>
+ControllerClient::request_payload(std::vector<std::uint8_t> packet, CommandId expected_id,
                             SteadyClock::time_point deadline, bool stop_on_timeout) {
   if (active_io_client == this || packet.empty() || deadline <= SteadyClock::now()) {
     return std::nullopt;
@@ -445,15 +445,15 @@ VescClient::request_payload(std::vector<std::uint8_t> packet, VescPacketCommID e
 }
 
 std::optional<MotorConfigImage>
-VescClient::request_motor_config_until(SteadyClock::time_point deadline) {
+ControllerClient::request_motor_config_until(SteadyClock::time_point deadline) {
   const auto payload =
-      request_payload(VescProtocol::build_get_motor_config_request(),
-                      VescPacketCommID::GetMotorConfig, deadline, true);
-  return payload ? VescProtocol::parse_motor_config(*payload) : std::nullopt;
+      request_payload(ControllerProtocol::build_get_motor_config_request(),
+                      CommandId::GetMotorConfig, deadline, true);
+  return payload ? ControllerProtocol::parse_motor_config(*payload) : std::nullopt;
 }
 
 std::optional<MotorConfigImage>
-VescClient::request_motor_config(std::chrono::milliseconds timeout) {
+ControllerClient::request_motor_config(std::chrono::milliseconds timeout) {
   if (timeout <= std::chrono::milliseconds::zero()) {
     return std::nullopt;
   }
@@ -465,47 +465,47 @@ VescClient::request_motor_config(std::chrono::milliseconds timeout) {
   return request_motor_config_until(deadline);
 }
 
-VescOperationResult VescClient::write_motor_config(const MotorConfigImage& image,
+OperationResult ControllerClient::write_motor_config(const MotorConfigImage& image,
                                                    std::chrono::milliseconds timeout) {
-  const auto packet = VescProtocol::build_set_motor_config_request(image);
+  const auto packet = ControllerProtocol::build_set_motor_config_request(image);
   if (packet.empty()) {
-    return VescOperationResult::InvalidData;
+    return OperationResult::InvalidData;
   }
 
   const auto deadline = SteadyClock::now() + timeout;
   std::unique_lock lock(management_mutex_, std::defer_lock);
   if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
-    return VescOperationResult::NoReply;
+    return OperationResult::NoReply;
   }
 
   const auto current = request_motor_config_until(deadline);
   if (!current) {
-    return VescOperationResult::NoReply;
+    return OperationResult::NoReply;
   }
   if (!same_config_signature(image.bytes, current->bytes)) {
-    return VescOperationResult::IncompatibleData;
+    return OperationResult::IncompatibleData;
   }
 
   const auto reply =
-      request_payload(packet, VescPacketCommID::SetMotorConfig, deadline, true);
+      request_payload(packet, CommandId::SetMotorConfig, deadline, true);
   if (!reply) {
-    return VescOperationResult::NoReply;
+    return OperationResult::NoReply;
   }
-  return VescProtocol::parse_config_ack(*reply, VescPacketCommID::SetMotorConfig)
-             ? VescOperationResult::Success
-             : VescOperationResult::Rejected;
+  return ControllerProtocol::parse_config_ack(*reply, CommandId::SetMotorConfig)
+             ? OperationResult::Success
+             : OperationResult::Rejected;
 }
 
 std::optional<AppConfigImage>
-VescClient::request_app_config_until(SteadyClock::time_point deadline) {
+ControllerClient::request_app_config_until(SteadyClock::time_point deadline) {
   const auto payload =
-      request_payload(VescProtocol::build_get_app_config_request(), VescPacketCommID::GetAppConfig,
+      request_payload(ControllerProtocol::build_get_app_config_request(), CommandId::GetAppConfig,
                       deadline, true);
-  return payload ? VescProtocol::parse_app_config(*payload) : std::nullopt;
+  return payload ? ControllerProtocol::parse_app_config(*payload) : std::nullopt;
 }
 
 std::optional<AppConfigImage>
-VescClient::request_app_config(std::chrono::milliseconds timeout) {
+ControllerClient::request_app_config(std::chrono::milliseconds timeout) {
   if (timeout <= std::chrono::milliseconds::zero()) {
     return std::nullopt;
   }
@@ -517,40 +517,40 @@ VescClient::request_app_config(std::chrono::milliseconds timeout) {
   return request_app_config_until(deadline);
 }
 
-VescOperationResult VescClient::write_app_config(const AppConfigImage& image,
+OperationResult ControllerClient::write_app_config(const AppConfigImage& image,
                                                  AppConfigStorage storage,
                                                  std::chrono::milliseconds timeout) {
-  const auto packet = VescProtocol::build_set_app_config_request(image, storage);
+  const auto packet = ControllerProtocol::build_set_app_config_request(image, storage);
   if (packet.empty()) {
-    return VescOperationResult::InvalidData;
+    return OperationResult::InvalidData;
   }
 
   const auto deadline = SteadyClock::now() + timeout;
   std::unique_lock lock(management_mutex_, std::defer_lock);
   if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
-    return VescOperationResult::NoReply;
+    return OperationResult::NoReply;
   }
 
   const auto current = request_app_config_until(deadline);
   if (!current) {
-    return VescOperationResult::NoReply;
+    return OperationResult::NoReply;
   }
   if (!same_config_signature(image.bytes, current->bytes)) {
-    return VescOperationResult::IncompatibleData;
+    return OperationResult::IncompatibleData;
   }
 
   const auto expected_id = storage == AppConfigStorage::Persistent
-                               ? VescPacketCommID::SetAppConfig
-                               : VescPacketCommID::SetAppConfigNoStore;
+                               ? CommandId::SetAppConfig
+                               : CommandId::SetAppConfigNoStore;
   const auto reply = request_payload(packet, expected_id, deadline, true);
   if (!reply) {
-    return VescOperationResult::NoReply;
+    return OperationResult::NoReply;
   }
-  return VescProtocol::parse_config_ack(*reply, expected_id) ? VescOperationResult::Success
-                                                             : VescOperationResult::Rejected;
+  return ControllerProtocol::parse_config_ack(*reply, expected_id) ? OperationResult::Success
+                                                             : OperationResult::Rejected;
 }
 
-std::optional<LispCodeImage> VescClient::request_lisp_code(std::chrono::milliseconds timeout) {
+std::optional<LispCodeImage> ControllerClient::request_lisp_code(std::chrono::milliseconds timeout) {
   if (timeout <= std::chrono::milliseconds::zero()) {
     return std::nullopt;
   }
@@ -561,15 +561,15 @@ std::optional<LispCodeImage> VescClient::request_lisp_code(std::chrono::millisec
   }
 
   const auto first =
-      request_payload(VescProtocol::build_lisp_read_request(kInitialLispReadBytes, 0),
-                      VescPacketCommID::LispReadCode, deadline, true);
+      request_payload(ControllerProtocol::build_lisp_read_request(kInitialLispReadBytes, 0),
+                      CommandId::LispReadCode, deadline, true);
   if (!first) {
     return std::nullopt;
   }
 
   std::uint32_t total_size = 0;
   std::uint32_t offset = 0;
-  auto chunk = VescProtocol::parse_lisp_read_reply(*first, total_size, offset);
+  auto chunk = ControllerProtocol::parse_lisp_read_reply(*first, total_size, offset);
   if (!chunk || offset != 0) {
     return std::nullopt;
   }
@@ -588,16 +588,16 @@ std::optional<LispCodeImage> VescClient::request_lisp_code(std::chrono::millisec
     const auto remaining = total_size - static_cast<std::uint32_t>(image.bytes.size());
     const auto requested = std::min(kLispReadChunkBytes, remaining);
     const auto reply =
-        request_payload(VescProtocol::build_lisp_read_request(
+        request_payload(ControllerProtocol::build_lisp_read_request(
                             requested, static_cast<std::uint32_t>(image.bytes.size())),
-                        VescPacketCommID::LispReadCode, deadline, true);
+                        CommandId::LispReadCode, deadline, true);
     if (!reply) {
       return std::nullopt;
     }
 
     std::uint32_t reply_total = 0;
     std::uint32_t reply_offset = 0;
-    chunk = VescProtocol::parse_lisp_read_reply(*reply, reply_total, reply_offset);
+    chunk = ControllerProtocol::parse_lisp_read_reply(*reply, reply_total, reply_offset);
     if (!chunk || reply_total != total_size || reply_offset != image.bytes.size() ||
         chunk->size() != requested) {
       return std::nullopt;
@@ -608,49 +608,49 @@ std::optional<LispCodeImage> VescClient::request_lisp_code(std::chrono::millisec
   return image;
 }
 
-VescOperationResult VescClient::erase_lisp_code_until(std::uint32_t size,
+OperationResult ControllerClient::erase_lisp_code_until(std::uint32_t size,
                                                       SteadyClock::time_point deadline) {
-  const auto packet = VescProtocol::build_lisp_erase_request(size);
+  const auto packet = ControllerProtocol::build_lisp_erase_request(size);
   if (packet.empty()) {
-    return VescOperationResult::InvalidData;
+    return OperationResult::InvalidData;
   }
 
   const auto reply =
-      request_payload(packet, VescPacketCommID::LispEraseCode, deadline, true);
+      request_payload(packet, CommandId::LispEraseCode, deadline, true);
   if (!reply) {
-    return VescOperationResult::NoReply;
+    return OperationResult::NoReply;
   }
-  return VescProtocol::parse_bool_ack(*reply, VescPacketCommID::LispEraseCode)
-             ? VescOperationResult::Success
-             : VescOperationResult::Rejected;
+  return ControllerProtocol::parse_bool_ack(*reply, CommandId::LispEraseCode)
+             ? OperationResult::Success
+             : OperationResult::Rejected;
 }
 
-VescOperationResult VescClient::erase_lisp_code(std::chrono::milliseconds timeout) {
+OperationResult ControllerClient::erase_lisp_code(std::chrono::milliseconds timeout) {
   const auto deadline = SteadyClock::now() + timeout;
   std::unique_lock lock(management_mutex_, std::defer_lock);
   if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
-    return VescOperationResult::NoReply;
+    return OperationResult::NoReply;
   }
   return erase_lisp_code_until(kEmptyLispEraseBytes, deadline);
 }
 
-VescOperationResult VescClient::write_lisp_code(const LispCodeImage& image,
+OperationResult ControllerClient::write_lisp_code(const LispCodeImage& image,
                                                 std::chrono::milliseconds timeout) {
-  auto packed = VescProtocol::pack_lisp_code(image);
+  auto packed = ControllerProtocol::pack_lisp_code(image);
   if (packed.empty()) {
-    return VescOperationResult::InvalidData;
+    return OperationResult::InvalidData;
   }
 
   const auto deadline = SteadyClock::now() + timeout;
   std::unique_lock lock(management_mutex_, std::defer_lock);
   if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
-    return VescOperationResult::NoReply;
+    return OperationResult::NoReply;
   }
 
   const auto erase_size = static_cast<std::uint32_t>(
       image.bytes.size() + 2U + static_cast<std::size_t>(kLispEraseMarginBytes));
   const auto erase_result = erase_lisp_code_until(erase_size, deadline);
-  if (erase_result != VescOperationResult::Success) {
+  if (erase_result != OperationResult::Success) {
     return erase_result;
   }
 
@@ -660,55 +660,55 @@ VescOperationResult VescClient::write_lisp_code(const LispCodeImage& image,
     const auto chunk_begin = packed.begin() + static_cast<std::ptrdiff_t>(offset);
     Payload chunk(chunk_begin, chunk_begin + static_cast<std::ptrdiff_t>(chunk_size));
     const auto reply =
-        request_payload(VescProtocol::build_lisp_write_request(chunk, offset),
-                        VescPacketCommID::LispWriteCode, deadline, true);
+        request_payload(ControllerProtocol::build_lisp_write_request(chunk, offset),
+                        CommandId::LispWriteCode, deadline, true);
     if (!reply) {
-      return VescOperationResult::NoReply;
+      return OperationResult::NoReply;
     }
-    if (!VescProtocol::parse_lisp_write_ack(*reply, offset)) {
-      return VescOperationResult::Rejected;
+    if (!ControllerProtocol::parse_lisp_write_ack(*reply, offset)) {
+      return OperationResult::Rejected;
     }
     offset += static_cast<std::uint32_t>(chunk_size);
   }
 
-  return VescOperationResult::Success;
+  return OperationResult::Success;
 }
 
-VescOperationResult VescClient::set_lisp_running(bool running,
+OperationResult ControllerClient::set_lisp_running(bool running,
                                                  std::chrono::milliseconds timeout) {
   const auto deadline = SteadyClock::now() + timeout;
   std::unique_lock lock(management_mutex_, std::defer_lock);
   if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
-    return VescOperationResult::NoReply;
+    return OperationResult::NoReply;
   }
 
   const auto reply =
-      request_payload(VescProtocol::build_lisp_set_running_request(running),
-                      VescPacketCommID::LispSetRunning, deadline, true);
+      request_payload(ControllerProtocol::build_lisp_set_running_request(running),
+                      CommandId::LispSetRunning, deadline, true);
   if (!reply) {
-    return VescOperationResult::NoReply;
+    return OperationResult::NoReply;
   }
-  return VescProtocol::parse_bool_ack(*reply, VescPacketCommID::LispSetRunning)
-             ? VescOperationResult::Success
-             : VescOperationResult::Rejected;
+  return ControllerProtocol::parse_bool_ack(*reply, CommandId::LispSetRunning)
+             ? OperationResult::Success
+             : OperationResult::Rejected;
 }
 
-bool VescClient::set_app_output_disabled(std::chrono::milliseconds duration) {
-  return enqueue_command(VescProtocol::build_app_disable_output_command(duration), false);
+bool ControllerClient::set_app_output_disabled(std::chrono::milliseconds duration) {
+  return enqueue_command(ControllerProtocol::build_app_disable_output_command(duration), false);
 }
 
 FocCalibrationResult
-VescClient::run_foc_calibration(const FocCalibrationParameters& parameters,
+ControllerClient::run_foc_calibration(const FocCalibrationParameters& parameters,
                                 std::chrono::milliseconds timeout) {
-  const auto packet = VescProtocol::build_foc_calibration_request(parameters);
+  const auto packet = ControllerProtocol::build_foc_calibration_request(parameters);
   if (packet.empty()) {
-    return {VescOperationResult::InvalidData, std::nullopt};
+    return {OperationResult::InvalidData, std::nullopt};
   }
 
   const auto deadline = SteadyClock::now() + timeout;
   std::unique_lock lock(management_mutex_, std::defer_lock);
   if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
-    return {VescOperationResult::NoReply, std::nullopt};
+    return {OperationResult::NoReply, std::nullopt};
   }
 
   constexpr auto kSuppressionMargin = std::chrono::seconds(5);
@@ -717,26 +717,26 @@ VescClient::run_foc_calibration(const FocCalibrationParameters& parameters,
   const auto suppression_duration =
       timeout > max_duration - kSuppressionMargin ? max_duration : timeout + kSuppressionMargin;
   if (!set_app_output_disabled(suppression_duration)) {
-    return {VescOperationResult::NoReply, std::nullopt};
+    return {OperationResult::NoReply, std::nullopt};
   }
 
   const auto reply =
-      request_payload(packet, VescPacketCommID::DetectApplyAllFoc, deadline, true);
+      request_payload(packet, CommandId::DetectApplyAllFoc, deadline, true);
   if (running_.load()) {
     (void)set_app_output_disabled(std::chrono::milliseconds::zero());
   }
   if (!reply) {
-    return {VescOperationResult::NoReply, std::nullopt};
+    return {OperationResult::NoReply, std::nullopt};
   }
 
-  const auto code = VescProtocol::parse_foc_calibration_reply(*reply);
+  const auto code = ControllerProtocol::parse_foc_calibration_reply(*reply);
   if (!code) {
-    return {VescOperationResult::Rejected, std::nullopt};
+    return {OperationResult::Rejected, std::nullopt};
   }
-  return {*code < 0 ? VescOperationResult::Rejected : VescOperationResult::Success, code};
+  return {*code < 0 ? OperationResult::Rejected : OperationResult::Success, code};
 }
 
-std::uint64_t VescClient::wall_time_ns() const {
+std::uint64_t ControllerClient::wall_time_ns() const {
   if (config_.wall_time_ns) {
     try {
       return config_.wall_time_ns();
@@ -748,7 +748,7 @@ std::uint64_t VescClient::wall_time_ns() const {
       std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
 }
 
-void VescClient::io_loop() {
+void ControllerClient::io_loop() {
   active_io_client = this;
   const int nfds = std::max(fd_, wake_pipe_[0]) + 1;
 
@@ -912,7 +912,7 @@ void VescClient::io_loop() {
   active_io_client = nullptr;
 }
 
-void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns) {
+void ControllerClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns) {
   if (payload.empty()) {
     return;
   }
@@ -928,7 +928,7 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
 
   if (completed_request) {
     if (completed_request->kind == ScheduledRequest::Kind::PollImu) {
-      if (auto data = VescProtocol::parse_get_imu_data(payload)) {
+      if (auto data = ControllerProtocol::parse_get_imu_data(payload)) {
         data->stamp_ns = stamp_ns;
         {
           std::lock_guard lock(cache_mutex_);
@@ -940,7 +940,7 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
     }
 
     if (completed_request->kind == ScheduledRequest::Kind::PollMotorState) {
-      if (auto state = VescProtocol::parse_get_values(payload)) {
+      if (auto state = ControllerProtocol::parse_get_values(payload)) {
         state->stamp_ns = stamp_ns;
         {
           std::lock_guard lock(cache_mutex_);
@@ -957,7 +957,7 @@ void VescClient::dispatch_payload(const Payload& payload, std::uint64_t stamp_ns
   }
 }
 
-bool VescClient::handle_request_timeout() {
+bool ControllerClient::handle_request_timeout() {
   std::optional<ScheduledRequest> timed_out;
   std::vector<ScheduledRequest> expired_queries;
   {
@@ -993,7 +993,7 @@ bool VescClient::handle_request_timeout() {
   return stop_transport;
 }
 
-bool VescClient::enqueue_command(std::vector<std::uint8_t> packet, bool refresh_watchdog) {
+bool ControllerClient::enqueue_command(std::vector<std::uint8_t> packet, bool refresh_watchdog) {
   std::lock_guard lock(scheduler_mutex_);
   if (!running_.load() || packet.size() < 3) {
     return false;
@@ -1014,11 +1014,11 @@ bool VescClient::enqueue_command(std::vector<std::uint8_t> packet, bool refresh_
   return true;
 }
 
-bool VescClient::enqueue_control_command(std::vector<std::uint8_t> packet) {
+bool ControllerClient::enqueue_control_command(std::vector<std::uint8_t> packet) {
   return enqueue_command(std::move(packet), true);
 }
 
-bool VescClient::control_watchdog_enabled() const {
+bool ControllerClient::control_watchdog_enabled() const {
   if (config_.command_watchdog_timeout <= std::chrono::milliseconds::zero()) {
     return false;
   }
@@ -1036,7 +1036,7 @@ bool VescClient::control_watchdog_enabled() const {
 }
 
 std::optional<std::vector<std::uint8_t>>
-VescClient::dequeue_due_watchdog_command(const SteadyClock::time_point& now) {
+ControllerClient::dequeue_due_watchdog_command(const SteadyClock::time_point& now) {
   if (!running_.load() || !control_watchdog_enabled()) {
     return std::nullopt;
   }
@@ -1051,16 +1051,16 @@ VescClient::dequeue_due_watchdog_command(const SteadyClock::time_point& now) {
   }
 
   if (config_.command_watchdog_action == ControlWatchdogAction::Coast) {
-    return VescProtocol::build_set_current_command(0.0f);
+    return ControllerProtocol::build_set_current_command(0.0f);
   }
   if (config_.command_watchdog_action == ControlWatchdogAction::BrakeCurrent) {
-    return VescProtocol::build_set_current_brake_command(
+    return ControllerProtocol::build_set_current_brake_command(
         clamp_brake_current(config_.command_watchdog_brake_current, config_.max_brake_current));
   }
   return std::nullopt;
 }
 
-void VescClient::wake_io_thread() const {
+void ControllerClient::wake_io_thread() const {
   if (wake_pipe_[1] < 0) {
     return;
   }
@@ -1068,7 +1068,7 @@ void VescClient::wake_io_thread() const {
   (void)::write(wake_pipe_[1], &byte, 1);
 }
 
-bool VescClient::write_packet(const std::vector<std::uint8_t>& pkt) {
+bool ControllerClient::write_packet(const std::vector<std::uint8_t>& pkt) {
   if (pkt.empty()) {
     return false;
   }
@@ -1099,7 +1099,7 @@ bool VescClient::write_packet(const std::vector<std::uint8_t>& pkt) {
   return remaining == 0;
 }
 
-bool VescClient::wait_until_writable() {
+bool ControllerClient::wait_until_writable() {
   while (running_.load()) {
     fd_set rfds;
     fd_set wfds;
@@ -1144,7 +1144,7 @@ bool VescClient::wait_until_writable() {
   return false;
 }
 
-void VescClient::publish_imu(const VescIMUData& data) {
+void ControllerClient::publish_imu(const ImuData& data) {
   const auto registry = callback_registry_;
   std::unordered_map<std::size_t, ImuCallback> callbacks;
   {
@@ -1154,7 +1154,7 @@ void VescClient::publish_imu(const VescIMUData& data) {
   invoke_callbacks(callbacks, data);
 }
 
-void VescClient::publish_motor_state(const VescMotorState& state) {
+void ControllerClient::publish_motor_state(const MotorState& state) {
   const auto registry = callback_registry_;
   std::unordered_map<std::size_t, MotorStateCallback> callbacks;
   {
@@ -1164,7 +1164,7 @@ void VescClient::publish_motor_state(const VescMotorState& state) {
   invoke_callbacks(callbacks, state);
 }
 
-void VescClient::clear_pending_work() {
+void ControllerClient::clear_pending_work() {
   std::deque<ScheduledRequest> queued_requests;
   std::optional<ScheduledRequest> in_flight;
   {
@@ -1186,7 +1186,7 @@ void VescClient::clear_pending_work() {
   }
 }
 
-VescClient::PollChannel* VescClient::select_due_poll_channel(const SteadyClock::time_point& now) {
+ControllerClient::PollChannel* ControllerClient::select_due_poll_channel(const SteadyClock::time_point& now) {
   PollChannel* selected = nullptr;
   SteadyClock::time_point selected_due{};
 
@@ -1210,8 +1210,8 @@ VescClient::PollChannel* VescClient::select_due_poll_channel(const SteadyClock::
   return selected;
 }
 
-std::optional<VescClient::ScheduledRequest>
-VescClient::make_due_poll_request(PollChannel& channel, const SteadyClock::time_point& now) {
+std::optional<ControllerClient::ScheduledRequest>
+ControllerClient::make_due_poll_request(PollChannel& channel, const SteadyClock::time_point& now) {
   const auto interval_ms = channel.interval_ms.load();
   if (interval_ms <= 0) {
     return std::nullopt;
@@ -1226,22 +1226,22 @@ VescClient::make_due_poll_request(PollChannel& channel, const SteadyClock::time_
 
   ScheduledRequest request;
   request.expected_id = static_cast<std::uint8_t>(channel.kind == PollChannel::Kind::Imu
-                                                      ? VescPacketCommID::GetImuData
-                                                      : VescPacketCommID::GetValues);
+                                                      ? CommandId::GetImuData
+                                                      : CommandId::GetValues);
   request.deadline = now + config_.poll_response_timeout;
 
   if (channel.kind == PollChannel::Kind::Imu) {
     request.kind = ScheduledRequest::Kind::PollImu;
-    request.packet = VescProtocol::build_get_imu_data_request();
+    request.packet = ControllerProtocol::build_get_imu_data_request();
   } else {
     request.kind = ScheduledRequest::Kind::PollMotorState;
-    request.packet = VescProtocol::build_get_values_request();
+    request.packet = ControllerProtocol::build_get_values_request();
   }
   return request;
 }
 
-std::optional<VescClient::ScheduledRequest>
-VescClient::dequeue_ready_query(const SteadyClock::time_point& now) {
+std::optional<ControllerClient::ScheduledRequest>
+ControllerClient::dequeue_ready_query(const SteadyClock::time_point& now) {
   std::vector<ScheduledRequest> expired_queries;
   std::optional<ScheduledRequest> ready_query;
   {
@@ -1279,4 +1279,4 @@ VescClient::dequeue_ready_query(const SteadyClock::time_point& now) {
   return ready_query;
 }
 
-} // namespace goat_vesc
+} // namespace goat_motor_controller

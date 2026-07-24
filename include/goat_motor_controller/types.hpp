@@ -1,6 +1,6 @@
 /**
  * @file types.hpp
- * @brief Public configuration and data types used by `goat_vesc`.
+ * @brief Public configuration and data types used by `goat_motor_controller`.
  */
 
 #pragma once
@@ -12,10 +12,10 @@
 #include <string>
 #include <vector>
 
-namespace goat_vesc {
+namespace goat_motor_controller {
 
 /**
- * @brief Host-side stale-command safety behavior used by `VescClient`.
+ * @brief Host-side stale-command safety behavior used by `ControllerClient`.
  */
 enum class ControlWatchdogAction {
   /** Disable the host-side command watchdog. */
@@ -29,7 +29,7 @@ enum class ControlWatchdogAction {
 /**
  * @brief Result of a reply-bearing operation that changes controller state.
  */
-enum class VescOperationResult {
+enum class OperationResult {
   /** The controller accepted the operation. */
   Success,
   /** The supplied image or request parameters are invalid. */
@@ -95,15 +95,15 @@ struct FocCalibrationParameters {
 /** @brief Result of a firmware FOC detection-and-apply operation. */
 struct FocCalibrationResult {
   /** Transport, validation, or firmware acceptance result. */
-  VescOperationResult operation{VescOperationResult::NoReply};
+  OperationResult operation{OperationResult::NoReply};
   /** Raw firmware result code when a well-formed reply was received. */
   std::optional<std::int16_t> firmware_code;
 };
 
 /**
- * @brief Runtime configuration used to construct a `VescClient`.
+ * @brief Runtime configuration used to construct a `ControllerClient`.
  */
-struct VescConfig {
+struct ControllerConfig {
   /** Serial device path. Ignored when `open_serial_fn` is supplied. */
   std::string device_path{};
   /** Serial baud rate. Supported values match the built-in termios mapping. */
@@ -127,7 +127,7 @@ struct VescConfig {
   /** Optional wall-clock source used to stamp decoded samples in nanoseconds. */
   std::function<std::uint64_t()> wall_time_ns;
   /** Optional transport opener used for tests or custom serial backends. */
-  std::function<bool(const VescConfig&, int&)> open_serial_fn;
+  std::function<bool(const ControllerConfig&, int&)> open_serial_fn;
 };
 
 /**
@@ -135,7 +135,7 @@ struct VescConfig {
  *
  * Poll intervals reflect runtime updates applied through the setter methods.
  */
-struct VescClientConfigSnapshot {
+struct ControllerConfigSnapshot {
   /** Current motor-state polling cadence. */
   std::chrono::milliseconds motor_poll_interval{0};
   /** Current IMU polling cadence. */
@@ -155,7 +155,7 @@ struct VescClientConfigSnapshot {
 };
 
 /**
- * @brief Parsed firmware version reported by the VESC.
+ * @brief Parsed firmware version reported by the controller.
  */
 struct FwVersion {
   /** Major firmware version number. */
@@ -167,7 +167,7 @@ struct FwVersion {
 /**
  * @brief Cached or freshly decoded motor telemetry sample.
  */
-struct VescMotorState {
+struct MotorState {
   /** Sample timestamp in nanoseconds from the configured wall-clock source. */
   std::uint64_t stamp_ns{0};
   /** Electrical RPM reported by the controller. */
@@ -188,14 +188,14 @@ struct VescMotorState {
   std::int32_t tachometer{0};
   /** Absolute tachometer count. */
   std::int32_t tachometer_abs{0};
-  /** Raw VESC fault code byte. */
+  /** Raw firmware fault code byte. */
   std::uint8_t fault_code{0};
 };
 
 /**
  * @brief Cached or freshly decoded IMU sample.
  */
-struct VescIMUData {
+struct ImuData {
   /** Sample timestamp in nanoseconds from the configured wall-clock source. */
   std::uint64_t stamp_ns{0};
   /** Roll in radians or firmware-native units reported by the controller. */
@@ -232,4 +232,4 @@ struct VescIMUData {
   float quat_z{0.0f};
 };
 
-} // namespace goat_vesc
+} // namespace goat_motor_controller

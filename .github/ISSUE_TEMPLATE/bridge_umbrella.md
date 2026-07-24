@@ -11,7 +11,7 @@ assignees: []
 Describe the release outcome this meta issue is defining.
 
 For release meta issues, the title may be the release qualifier itself, for
-example `goat_vesc_driver v1.0`.
+example `goat_motor_controller_driver v1.0`.
 
 ## Release Definition
 
@@ -24,7 +24,7 @@ example `goat_vesc_driver v1.0`.
 
 ## Milestone
 
-- Milestone: `goat_vesc_driver v1.0`
+- Milestone: `goat_motor_controller_driver v1.0`
 
 ## Acceptance Criteria
 

@@ -1,13 +1,13 @@
-# goat_vesc Operator Quick Reference
+# goat_motor_controller Operator Quick Reference
 
-`goat_vesc` is a GOAT-focused VESC transport library. It gives higher-level
+`goat_motor_controller` is a GOAT-focused motor-controller transport library. It gives higher-level
 applications a thread-safe way to connect to a controller, read the important
 telemetry, and send the core drive and steering commands without handling
 packet framing or serial arbitration themselves.
 
 ## Discovery And Lifecycle
 
-- `VescClient::find_devices()`: Return visible `/dev/ttyACM*` candidates.
+- `ControllerClient::find_devices()`: Return visible `/dev/ttyACM*` candidates.
 - `connect()`: Open the configured transport and start the background I/O
   thread.
 - `disconnect()`: Stop the background thread and close the transport.
@@ -30,7 +30,7 @@ callback already copied for dispatch may run once after its subscription resets.
 
 ## Motor Telemetry
 
-`VescMotorState` currently exposes:
+`MotorState` currently exposes:
 
 - `stamp_ns`
 - `rpm`
@@ -55,7 +55,7 @@ For power-oriented monitoring, the most useful fields are usually:
 
 ## IMU Telemetry
 
-`VescIMUData` currently exposes:
+`ImuData` currently exposes:
 
 - `stamp_ns`
 - `roll`, `pitch`, `yaw`
@@ -108,7 +108,7 @@ FOC calibration also persists motor configuration and moves the motor. It
 requires separate actuator authorization and an unloaded, secured motor; it
 never scans CAN.
 
-## `VescConfig` Options
+## `ControllerConfig` Options
 
 The runtime config object includes:
 
@@ -142,23 +142,23 @@ The runtime config object includes:
 ## Configuration Model
 
 Host runtime config is programmatic today. The library does not include a file
-loader or interpret VESC configuration fields. Controller images are
+loader or interpret controller configuration fields. Controller images are
 firmware-specific binary data intended for a version-aware consuming
 application.
 
 The expected pattern today is:
 
 1. Higher-level GOAT code decides the desired launch/config values.
-2. That code populates a `VescConfig`.
-3. The configured `VescClient` is constructed from that object.
+2. That code populates a `ControllerConfig`.
+3. The configured `ControllerClient` is constructed from that object.
 
 ## Manual Tools
 
 Built examples:
 
-- `vesc_probe`
+- `controller_probe`
   Connect, query firmware, and verify IMU plus motor telemetry.
-- `vesc_hardware_smoke`
+- `controller_hardware_smoke`
   Runs telemetry polling, live subscriptions, explicitly armed command phases,
   and a firmware query under load in one operator-facing hardware smoke pass.
 
@@ -166,8 +166,8 @@ Build the requested target first, then invoke its binary from `build/default/`.
 Actuating validation requires an explicit target and arming flag:
 
 ```bash
-build/default/vesc_hardware_smoke --device /dev/ttyACM0 --arm-actuators
+build/default/controller_hardware_smoke --device /dev/ttyACM0 --arm-actuators
 ```
 
-Final neutral commands are best effort. VESC-side timeout and hardware limits
+Final neutral commands are best effort. Firmware-side timeout and hardware limits
 remain the failure backstop.

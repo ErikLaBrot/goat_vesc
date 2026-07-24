@@ -1,4 +1,4 @@
-#include "goat_vesc/vesc_protocol.hpp"
+#include "goat_motor_controller/controller_protocol.hpp"
 
 #include <cmath>
 #include <cstring>
@@ -6,7 +6,7 @@
 #include <optional>
 #include <type_traits>
 
-namespace goat_vesc {
+namespace goat_motor_controller {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ float read_f32(const std::uint8_t* p) {
   return f;
 }
 
-template <typename T> void append_integral_be(VescProtocol::Payload& payload, T value) {
+template <typename T> void append_integral_be(ControllerProtocol::Payload& payload, T value) {
   static_assert(std::is_integral_v<T>, "append_integral_be requires an integral type");
 
   using U = std::make_unsigned_t<T>;
@@ -65,8 +65,8 @@ template <typename T> std::optional<T> scaled_integer_rounded(float value, doubl
 }
 
 template <typename Image>
-std::optional<Image> parse_config_image(const VescProtocol::Payload& payload,
-                                        VescPacketCommID expected_id) {
+std::optional<Image> parse_config_image(const ControllerProtocol::Payload& payload,
+                                        CommandId expected_id) {
   constexpr std::size_t kSignatureBytes = 4;
   if (payload.size() < 1 + kSignatureBytes || payload.size() > kMaxPayloadBytes ||
       payload[0] != static_cast<std::uint8_t>(expected_id)) {
@@ -79,7 +79,7 @@ std::optional<Image> parse_config_image(const VescProtocol::Payload& payload,
 
 // ── Framing ───────────────────────────────────────────────────────────────────
 
-std::uint16_t VescProtocol::crc16ccitt(const Payload& data) noexcept {
+std::uint16_t ControllerProtocol::crc16ccitt(const Payload& data) noexcept {
   std::uint16_t crc = 0;
   for (const auto byte : data) {
     crc = static_cast<std::uint16_t>(crc ^ (static_cast<std::uint32_t>(byte) << 8U));
@@ -92,7 +92,7 @@ std::uint16_t VescProtocol::crc16ccitt(const Payload& data) noexcept {
   return crc;
 }
 
-VescProtocol::Payload VescProtocol::frame(const Payload& payload) {
+ControllerProtocol::Payload ControllerProtocol::frame(const Payload& payload) {
   const std::size_t len = payload.size();
   if (len == 0 || len > kMaxPayloadBytes) {
     return {};
@@ -122,54 +122,54 @@ VescProtocol::Payload VescProtocol::frame(const Payload& payload) {
 
 // ── Request builders ──────────────────────────────────────────────────────────
 
-VescProtocol::Payload VescProtocol::build_fw_version_request() {
-  return frame({static_cast<std::uint8_t>(VescPacketCommID::FwVersion)});
+ControllerProtocol::Payload ControllerProtocol::build_fw_version_request() {
+  return frame({static_cast<std::uint8_t>(CommandId::FwVersion)});
 }
 
-VescProtocol::Payload VescProtocol::build_get_values_request() {
-  return frame({static_cast<std::uint8_t>(VescPacketCommID::GetValues)});
+ControllerProtocol::Payload ControllerProtocol::build_get_values_request() {
+  return frame({static_cast<std::uint8_t>(CommandId::GetValues)});
 }
 
-VescProtocol::Payload VescProtocol::build_get_imu_data_request() {
-  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::GetImuData)};
+ControllerProtocol::Payload ControllerProtocol::build_get_imu_data_request() {
+  Payload payload{static_cast<std::uint8_t>(CommandId::GetImuData)};
   append_integral_be(payload, std::uint16_t{0xFFFFU});
   return frame(payload);
 }
 
-VescProtocol::Payload VescProtocol::build_get_motor_config_request() {
-  return frame({static_cast<std::uint8_t>(VescPacketCommID::GetMotorConfig)});
+ControllerProtocol::Payload ControllerProtocol::build_get_motor_config_request() {
+  return frame({static_cast<std::uint8_t>(CommandId::GetMotorConfig)});
 }
 
-VescProtocol::Payload
-VescProtocol::build_set_motor_config_request(const MotorConfigImage& image) {
+ControllerProtocol::Payload
+ControllerProtocol::build_set_motor_config_request(const MotorConfigImage& image) {
   constexpr std::size_t kSignatureBytes = 4;
   if (image.bytes.size() < kSignatureBytes || image.bytes.size() >= kMaxPayloadBytes) {
     return {};
   }
 
-  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetMotorConfig)};
+  Payload payload{static_cast<std::uint8_t>(CommandId::SetMotorConfig)};
   payload.insert(payload.end(), image.bytes.begin(), image.bytes.end());
   return frame(payload);
 }
 
-VescProtocol::Payload VescProtocol::build_get_app_config_request() {
-  return frame({static_cast<std::uint8_t>(VescPacketCommID::GetAppConfig)});
+ControllerProtocol::Payload ControllerProtocol::build_get_app_config_request() {
+  return frame({static_cast<std::uint8_t>(CommandId::GetAppConfig)});
 }
 
-VescProtocol::Payload VescProtocol::build_set_app_config_request(const AppConfigImage& image,
+ControllerProtocol::Payload ControllerProtocol::build_set_app_config_request(const AppConfigImage& image,
                                                                  AppConfigStorage storage) {
   constexpr std::size_t kSignatureBytes = 4;
   if (image.bytes.size() < kSignatureBytes || image.bytes.size() >= kMaxPayloadBytes) {
     return {};
   }
 
-  VescPacketCommID id;
+  CommandId id;
   switch (storage) {
   case AppConfigStorage::Volatile:
-    id = VescPacketCommID::SetAppConfigNoStore;
+    id = CommandId::SetAppConfigNoStore;
     break;
   case AppConfigStorage::Persistent:
-    id = VescPacketCommID::SetAppConfig;
+    id = CommandId::SetAppConfig;
     break;
   default:
     return {};
@@ -179,7 +179,7 @@ VescProtocol::Payload VescProtocol::build_set_app_config_request(const AppConfig
   return frame(payload);
 }
 
-VescProtocol::Payload VescProtocol::build_lisp_read_request(std::uint32_t length,
+ControllerProtocol::Payload ControllerProtocol::build_lisp_read_request(std::uint32_t length,
                                                             std::uint32_t offset) {
   constexpr std::uint32_t kMaxReadChunk = kMaxPayloadBytes - 10U;
   if (length == 0 || length > kMaxReadChunk ||
@@ -188,44 +188,44 @@ VescProtocol::Payload VescProtocol::build_lisp_read_request(std::uint32_t length
     return {};
   }
 
-  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::LispReadCode)};
+  Payload payload{static_cast<std::uint8_t>(CommandId::LispReadCode)};
   append_integral_be(payload, static_cast<std::int32_t>(length));
   append_integral_be(payload, static_cast<std::int32_t>(offset));
   return frame(payload);
 }
 
-VescProtocol::Payload VescProtocol::build_lisp_erase_request(std::uint32_t size) {
+ControllerProtocol::Payload ControllerProtocol::build_lisp_erase_request(std::uint32_t size) {
   if (size == 0 || size > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
     return {};
   }
 
-  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::LispEraseCode)};
+  Payload payload{static_cast<std::uint8_t>(CommandId::LispEraseCode)};
   append_integral_be(payload, static_cast<std::int32_t>(size));
   return frame(payload);
 }
 
-VescProtocol::Payload VescProtocol::build_lisp_write_request(const Payload& chunk,
+ControllerProtocol::Payload ControllerProtocol::build_lisp_write_request(const Payload& chunk,
                                                              std::uint32_t offset) {
   constexpr std::size_t kWriteHeaderBytes = 5;
   if (chunk.empty() || chunk.size() > kMaxPayloadBytes - kWriteHeaderBytes) {
     return {};
   }
 
-  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::LispWriteCode)};
+  Payload payload{static_cast<std::uint8_t>(CommandId::LispWriteCode)};
   append_integral_be(payload, offset);
   payload.insert(payload.end(), chunk.begin(), chunk.end());
   return frame(payload);
 }
 
-VescProtocol::Payload VescProtocol::build_lisp_set_running_request(bool running) {
+ControllerProtocol::Payload ControllerProtocol::build_lisp_set_running_request(bool running) {
   return frame({
-      static_cast<std::uint8_t>(VescPacketCommID::LispSetRunning),
+      static_cast<std::uint8_t>(CommandId::LispSetRunning),
       static_cast<std::uint8_t>(running),
   });
 }
 
-VescProtocol::Payload
-VescProtocol::build_foc_calibration_request(const FocCalibrationParameters& parameters) {
+ControllerProtocol::Payload
+ControllerProtocol::build_foc_calibration_request(const FocCalibrationParameters& parameters) {
   constexpr float kMaxPowerLossW = 99999.0f;
   constexpr float kMaxInputCurrentA = 9999.0f;
   constexpr float kMaxErpm = 999999.0f;
@@ -254,7 +254,7 @@ VescProtocol::build_foc_calibration_request(const FocCalibrationParameters& para
     return {};
   }
 
-  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc), 0};
+  Payload payload{static_cast<std::uint8_t>(CommandId::DetectApplyAllFoc), 0};
   append_integral_be(payload, *max_loss);
   append_integral_be(payload, *min_current);
   append_integral_be(payload, *max_current);
@@ -263,24 +263,24 @@ VescProtocol::build_foc_calibration_request(const FocCalibrationParameters& para
   return frame(payload);
 }
 
-VescProtocol::Payload
-VescProtocol::build_app_disable_output_command(std::chrono::milliseconds duration) {
+ControllerProtocol::Payload
+ControllerProtocol::build_app_disable_output_command(std::chrono::milliseconds duration) {
   if (duration < std::chrono::milliseconds::zero() ||
       duration.count() > std::numeric_limits<std::int32_t>::max()) {
     return {};
   }
 
-  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::AppDisableOutput), 0};
+  Payload payload{static_cast<std::uint8_t>(CommandId::AppDisableOutput), 0};
   append_integral_be(payload, static_cast<std::int32_t>(duration.count()));
   return frame(payload);
 }
 
-VescProtocol::Payload VescProtocol::pack_lisp_code(const LispCodeImage& image) {
+ControllerProtocol::Payload ControllerProtocol::pack_lisp_code(const LispCodeImage& image) {
   if (image.bytes.empty() || image.bytes.size() > kMaxLispCodeBytes) {
     return {};
   }
 
-  Payload code{0, 0}; // Current VESC Tool flags.
+  Payload code{0, 0}; // Current firmware code-image flags.
   code.insert(code.end(), image.bytes.begin(), image.bytes.end());
 
   Payload packed;
@@ -291,66 +291,66 @@ VescProtocol::Payload VescProtocol::pack_lisp_code(const LispCodeImage& image) {
   return packed;
 }
 
-VescProtocol::Payload VescProtocol::build_set_rpm_command(std::int32_t rpm) {
-  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetRpm)};
+ControllerProtocol::Payload ControllerProtocol::build_set_rpm_command(std::int32_t rpm) {
+  Payload payload{static_cast<std::uint8_t>(CommandId::SetRpm)};
   append_integral_be(payload, rpm);
   return frame(payload);
 }
 
-VescProtocol::Payload VescProtocol::build_set_duty_command(float duty) {
+ControllerProtocol::Payload ControllerProtocol::build_set_duty_command(float duty) {
   const auto scaled = scaled_integer<std::int32_t>(duty, 100000.0);
   if (!scaled || duty < -1.0f || duty > 1.0f) {
     return {};
   }
-  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetDuty)};
+  Payload payload{static_cast<std::uint8_t>(CommandId::SetDuty)};
   append_integral_be(payload, *scaled);
   return frame(payload);
 }
 
-VescProtocol::Payload VescProtocol::build_set_current_command(float amps) {
+ControllerProtocol::Payload ControllerProtocol::build_set_current_command(float amps) {
   const auto scaled = scaled_integer<std::int32_t>(amps, 1000.0);
   if (!scaled) {
     return {};
   }
-  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetCurrent)};
+  Payload payload{static_cast<std::uint8_t>(CommandId::SetCurrent)};
   append_integral_be(payload, *scaled);
   return frame(payload);
 }
 
-VescProtocol::Payload VescProtocol::build_set_current_brake_command(float amps) {
+ControllerProtocol::Payload ControllerProtocol::build_set_current_brake_command(float amps) {
   const auto scaled = scaled_integer<std::int32_t>(amps, 1000.0);
   if (!scaled) {
     return {};
   }
-  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetCurrentBrake)};
+  Payload payload{static_cast<std::uint8_t>(CommandId::SetCurrentBrake)};
   append_integral_be(payload, *scaled);
   return frame(payload);
 }
 
-VescProtocol::Payload VescProtocol::build_set_servo_pos_command(float position) {
+ControllerProtocol::Payload ControllerProtocol::build_set_servo_pos_command(float position) {
   const auto scaled = scaled_integer<std::int16_t>(position, 1000.0);
   if (!scaled || position < 0.0f || position > 1.0f) {
     return {};
   }
-  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::SetServoPos)};
+  Payload payload{static_cast<std::uint8_t>(CommandId::SetServoPos)};
   append_integral_be(payload, *scaled);
   return frame(payload);
 }
 
 // ── Response parsers ──────────────────────────────────────────────────────────
 
-std::optional<FwVersion> VescProtocol::parse_fw_version(const Payload& payload) {
+std::optional<FwVersion> ControllerProtocol::parse_fw_version(const Payload& payload) {
   // [0] comm_id  [1] major  [2] minor  [3..] hw name, uuid, ...
   if (payload.size() < 3) {
     return std::nullopt;
   }
-  if (payload[0] != static_cast<std::uint8_t>(VescPacketCommID::FwVersion)) {
+  if (payload[0] != static_cast<std::uint8_t>(CommandId::FwVersion)) {
     return std::nullopt;
   }
   return FwVersion{payload[1], payload[2]};
 }
 
-std::optional<VescMotorState> VescProtocol::parse_get_values(const Payload& payload) {
+std::optional<MotorState> ControllerProtocol::parse_get_values(const Payload& payload) {
   // Layout after the comm_id byte (offset from p = payload.data() + 1):
   //   +0  ..+1  : temp_fet          int16 / 10.0
   //   +2  ..+3  : temp_motor        int16 / 10.0
@@ -372,13 +372,13 @@ std::optional<VescMotorState> VescProtocol::parse_get_values(const Payload& payl
   if (payload.size() < kMinLen) {
     return std::nullopt;
   }
-  if (payload[0] != static_cast<std::uint8_t>(VescPacketCommID::GetValues)) {
+  if (payload[0] != static_cast<std::uint8_t>(CommandId::GetValues)) {
     return std::nullopt;
   }
 
   const auto* p = payload.data() + 1;
 
-  VescMotorState s;
+  MotorState s;
   s.temp_fet = static_cast<float>(read_i16(p + 0)) / 10.0f;
   s.temp_motor = static_cast<float>(read_i16(p + 2)) / 10.0f;
   s.current_motor = static_cast<float>(read_i32(p + 4)) / 100.0f;
@@ -395,7 +395,7 @@ std::optional<VescMotorState> VescProtocol::parse_get_values(const Payload& payl
   return s;
 }
 
-std::optional<VescIMUData> VescProtocol::parse_get_imu_data(const Payload& payload) {
+std::optional<ImuData> ControllerProtocol::parse_get_imu_data(const Payload& payload) {
   // Layout:
   //   [0]      comm_id  (GetImuData = 65)
   //   [1..2]   mask     uint16 — which fields follow
@@ -406,7 +406,7 @@ std::optional<VescIMUData> VescProtocol::parse_get_imu_data(const Payload& paylo
   //              bit 3  AccX     bit 7  GyroY   bit 11  MagZ    bit 15  QuatZ
   if (payload.size() < 3)
     return std::nullopt;
-  if (payload[0] != static_cast<std::uint8_t>(VescPacketCommID::GetImuData))
+  if (payload[0] != static_cast<std::uint8_t>(CommandId::GetImuData))
     return std::nullopt;
 
   const std::uint16_t mask = read_u16(payload.data() + 1);
@@ -416,7 +416,7 @@ std::optional<VescIMUData> VescProtocol::parse_get_imu_data(const Payload& paylo
     return std::nullopt;
 
   const auto* p = payload.data() + 3;
-  VescIMUData d;
+  ImuData d;
 
   auto next = [&]() -> float {
     const float v = read_f32(p);
@@ -451,20 +451,20 @@ std::optional<VescIMUData> VescProtocol::parse_get_imu_data(const Payload& paylo
   return d;
 }
 
-std::optional<MotorConfigImage> VescProtocol::parse_motor_config(const Payload& payload) {
-  return parse_config_image<MotorConfigImage>(payload, VescPacketCommID::GetMotorConfig);
+std::optional<MotorConfigImage> ControllerProtocol::parse_motor_config(const Payload& payload) {
+  return parse_config_image<MotorConfigImage>(payload, CommandId::GetMotorConfig);
 }
 
-std::optional<AppConfigImage> VescProtocol::parse_app_config(const Payload& payload) {
-  return parse_config_image<AppConfigImage>(payload, VescPacketCommID::GetAppConfig);
+std::optional<AppConfigImage> ControllerProtocol::parse_app_config(const Payload& payload) {
+  return parse_config_image<AppConfigImage>(payload, CommandId::GetAppConfig);
 }
 
-std::optional<VescProtocol::Payload>
-VescProtocol::parse_lisp_read_reply(const Payload& payload, std::uint32_t& total_size,
+std::optional<ControllerProtocol::Payload>
+ControllerProtocol::parse_lisp_read_reply(const Payload& payload, std::uint32_t& total_size,
                                     std::uint32_t& offset) {
   constexpr std::size_t kHeaderBytes = 9;
   if (payload.size() < kHeaderBytes ||
-      payload[0] != static_cast<std::uint8_t>(VescPacketCommID::LispReadCode)) {
+      payload[0] != static_cast<std::uint8_t>(CommandId::LispReadCode)) {
     return std::nullopt;
   }
 
@@ -483,28 +483,28 @@ VescProtocol::parse_lisp_read_reply(const Payload& payload, std::uint32_t& total
   return Payload(payload.begin() + static_cast<std::ptrdiff_t>(kHeaderBytes), payload.end());
 }
 
-bool VescProtocol::parse_config_ack(const Payload& payload, VescPacketCommID expected_id) {
+bool ControllerProtocol::parse_config_ack(const Payload& payload, CommandId expected_id) {
   return payload.size() == 1 && payload[0] == static_cast<std::uint8_t>(expected_id);
 }
 
-bool VescProtocol::parse_lisp_write_ack(const Payload& payload, std::uint32_t expected_offset) {
+bool ControllerProtocol::parse_lisp_write_ack(const Payload& payload, std::uint32_t expected_offset) {
   return payload.size() == 6 &&
-         payload[0] == static_cast<std::uint8_t>(VescPacketCommID::LispWriteCode) &&
+         payload[0] == static_cast<std::uint8_t>(CommandId::LispWriteCode) &&
          payload[1] == 1 && read_u32(payload.data() + 2) == expected_offset;
 }
 
-bool VescProtocol::parse_bool_ack(const Payload& payload, VescPacketCommID expected_id) {
+bool ControllerProtocol::parse_bool_ack(const Payload& payload, CommandId expected_id) {
   return payload.size() == 2 && payload[0] == static_cast<std::uint8_t>(expected_id) &&
          payload[1] == 1;
 }
 
 std::optional<std::int16_t>
-VescProtocol::parse_foc_calibration_reply(const Payload& payload) {
+ControllerProtocol::parse_foc_calibration_reply(const Payload& payload) {
   if (payload.size() != 3 ||
-      payload[0] != static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc)) {
+      payload[0] != static_cast<std::uint8_t>(CommandId::DetectApplyAllFoc)) {
     return std::nullopt;
   }
   return read_i16(payload.data() + 1);
 }
 
-} // namespace goat_vesc
+} // namespace goat_motor_controller

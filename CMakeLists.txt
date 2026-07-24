@@ -1,19 +1,19 @@
 cmake_minimum_required(VERSION 3.21)
-project(goat_vesc VERSION 0.1.0 LANGUAGES CXX)
+project(goat_motor_controller VERSION 0.1.0 LANGUAGES CXX)
 
 include(CTest)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 find_package(Threads REQUIRED)
 
-option(GOAT_VESC_BUILD_EXAMPLES "Build examples" ON)
-option(GOAT_VESC_ENABLE_CLANG_TIDY "Enable clang-tidy" OFF)
-option(GOAT_VESC_ENABLE_CPPCHECK "Enable cppcheck" OFF)
-option(GOAT_VESC_ENABLE_ASAN "Enable AddressSanitizer" OFF)
-option(GOAT_VESC_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
-option(GOAT_VESC_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
-option(GOAT_VESC_ENABLE_WERROR "Treat compiler warnings as errors" OFF)
-option(GOAT_VESC_BUILD_DOCS "Enable API documentation target when Doxygen is available" ON)
+option(GOAT_MOTOR_CONTROLLER_BUILD_EXAMPLES "Build examples" ON)
+option(GOAT_MOTOR_CONTROLLER_ENABLE_CLANG_TIDY "Enable clang-tidy" OFF)
+option(GOAT_MOTOR_CONTROLLER_ENABLE_CPPCHECK "Enable cppcheck" OFF)
+option(GOAT_MOTOR_CONTROLLER_ENABLE_ASAN "Enable AddressSanitizer" OFF)
+option(GOAT_MOTOR_CONTROLLER_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+option(GOAT_MOTOR_CONTROLLER_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+option(GOAT_MOTOR_CONTROLLER_ENABLE_WERROR "Treat compiler warnings as errors" OFF)
+option(GOAT_MOTOR_CONTROLLER_BUILD_DOCS "Enable API documentation target when Doxygen is available" ON)
 
 include(cmake/StaticAnalysis.cmake)
 include(cmake/Sanitizers.cmake)
@@ -21,30 +21,30 @@ include(cmake/Sanitizers.cmake)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-add_library(goat_vesc
+add_library(goat_motor_controller
   src/packet_parser.cpp
   src/protocol.cpp
-  src/vesc_client.cpp
+  src/controller_client.cpp
 )
-add_library(goat_vesc::goat_vesc ALIAS goat_vesc)
+add_library(goat_motor_controller::goat_motor_controller ALIAS goat_motor_controller)
 
-target_include_directories(goat_vesc
+target_include_directories(goat_motor_controller
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
-target_compile_features(goat_vesc PUBLIC cxx_std_17)
-target_link_libraries(goat_vesc PUBLIC Threads::Threads)
+target_compile_features(goat_motor_controller PUBLIC cxx_std_17)
+target_link_libraries(goat_motor_controller PUBLIC Threads::Threads)
 
-goat_vesc_enable_warnings(goat_vesc)
-goat_vesc_enable_sanitizers(goat_vesc)
+goat_motor_controller_enable_warnings(goat_motor_controller)
+goat_motor_controller_enable_sanitizers(goat_motor_controller)
 
-if(GOAT_VESC_BUILD_EXAMPLES)
-  foreach(example IN ITEMS vesc_probe vesc_hardware_smoke)
+if(GOAT_MOTOR_CONTROLLER_BUILD_EXAMPLES)
+  foreach(example IN ITEMS controller_probe controller_hardware_smoke)
     add_executable(${example} examples/${example}.cpp)
-    target_link_libraries(${example} PRIVATE goat_vesc)
-    goat_vesc_enable_warnings(${example})
-    goat_vesc_enable_sanitizers(${example})
+    target_link_libraries(${example} PRIVATE goat_motor_controller)
+    goat_motor_controller_enable_warnings(${example})
+    goat_motor_controller_enable_sanitizers(${example})
   endforeach()
 endif()
 
@@ -52,11 +52,11 @@ if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
 
-set(GOAT_VESC_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
-set(GOAT_VESC_INSTALL_DATADIR "${CMAKE_INSTALL_DATAROOTDIR}/${PROJECT_NAME}")
+set(GOAT_MOTOR_CONTROLLER_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
+set(GOAT_MOTOR_CONTROLLER_INSTALL_DATADIR "${CMAKE_INSTALL_DATAROOTDIR}/${PROJECT_NAME}")
 
-install(TARGETS goat_vesc
-  EXPORT goat_vescTargets
+install(TARGETS goat_motor_controller
+  EXPORT goat_motor_controllerTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -67,43 +67,43 @@ install(DIRECTORY include/
 )
 
 configure_package_config_file(
-  cmake/goat_vescConfig.cmake.in
-  ${CMAKE_CURRENT_BINARY_DIR}/goat_vescConfig.cmake
-  INSTALL_DESTINATION ${GOAT_VESC_INSTALL_CMAKEDIR}
+  cmake/goat_motor_controllerConfig.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/goat_motor_controllerConfig.cmake
+  INSTALL_DESTINATION ${GOAT_MOTOR_CONTROLLER_INSTALL_CMAKEDIR}
 )
 
 write_basic_package_version_file(
-  ${CMAKE_CURRENT_BINARY_DIR}/goat_vescConfigVersion.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/goat_motor_controllerConfigVersion.cmake
   VERSION ${PROJECT_VERSION}
   COMPATIBILITY SameMinorVersion
 )
 
-install(EXPORT goat_vescTargets
-  FILE goat_vescTargets.cmake
-  NAMESPACE goat_vesc::
-  DESTINATION ${GOAT_VESC_INSTALL_CMAKEDIR}
+install(EXPORT goat_motor_controllerTargets
+  FILE goat_motor_controllerTargets.cmake
+  NAMESPACE goat_motor_controller::
+  DESTINATION ${GOAT_MOTOR_CONTROLLER_INSTALL_CMAKEDIR}
 )
 
 install(FILES
-  ${CMAKE_CURRENT_BINARY_DIR}/goat_vescConfig.cmake
-  ${CMAKE_CURRENT_BINARY_DIR}/goat_vescConfigVersion.cmake
-  DESTINATION ${GOAT_VESC_INSTALL_CMAKEDIR}
+  ${CMAKE_CURRENT_BINARY_DIR}/goat_motor_controllerConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/goat_motor_controllerConfigVersion.cmake
+  DESTINATION ${GOAT_MOTOR_CONTROLLER_INSTALL_CMAKEDIR}
 )
 
-install(FILES package.xml
-  DESTINATION ${GOAT_VESC_INSTALL_DATADIR}
+install(FILES package.xml LICENSE
+  DESTINATION ${GOAT_MOTOR_CONTROLLER_INSTALL_DATADIR}
 )
 
-if(GOAT_VESC_BUILD_DOCS)
+if(GOAT_MOTOR_CONTROLLER_BUILD_DOCS)
   find_package(Doxygen QUIET)
   if(DOXYGEN_FOUND)
-    set(GOAT_VESC_DOCS_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/docs")
-    set(GOAT_VESC_DOXYFILE "${CMAKE_CURRENT_BINARY_DIR}/Doxyfile")
-    configure_file(docs/Doxyfile.in "${GOAT_VESC_DOXYFILE}" @ONLY)
+    set(GOAT_MOTOR_CONTROLLER_DOCS_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/docs")
+    set(GOAT_MOTOR_CONTROLLER_DOXYFILE "${CMAKE_CURRENT_BINARY_DIR}/Doxyfile")
+    configure_file(docs/Doxyfile.in "${GOAT_MOTOR_CONTROLLER_DOXYFILE}" @ONLY)
     add_custom_target(docs
-      COMMAND "${DOXYGEN_EXECUTABLE}" "${GOAT_VESC_DOXYFILE}"
+      COMMAND "${DOXYGEN_EXECUTABLE}" "${GOAT_MOTOR_CONTROLLER_DOXYFILE}"
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-      COMMENT "Generating goat_vesc API documentation"
+      COMMENT "Generating goat_motor_controller API documentation"
       VERBATIM
     )
   else()

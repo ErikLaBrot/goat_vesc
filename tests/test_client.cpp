@@ -1,9 +1,9 @@
 #include "test_support.hpp"
 
-#include "goat_vesc/packet_parser.hpp"
-#include "goat_vesc/protocol_ids.hpp"
-#include "goat_vesc/vesc_client.hpp"
-#include "goat_vesc/vesc_protocol.hpp"
+#include "goat_motor_controller/packet_parser.hpp"
+#include "goat_motor_controller/protocol_ids.hpp"
+#include "goat_motor_controller/controller_client.hpp"
+#include "goat_motor_controller/controller_protocol.hpp"
 
 #include <algorithm>
 #include <array>
@@ -26,70 +26,70 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-namespace goat_vesc {
+namespace goat_motor_controller {
 
-struct VescClientTestAccess {
-  static auto scheduler_mutex(VescClient* client) -> std::mutex& {
+struct ControllerClientTestAccess {
+  static auto scheduler_mutex(ControllerClient* client) -> std::mutex& {
     return client->scheduler_mutex_;
   }
 
-  static auto management_mutex(VescClient* client) -> std::timed_mutex& {
+  static auto management_mutex(ControllerClient* client) -> std::timed_mutex& {
     return client->management_mutex_;
   }
 
-  static auto running(VescClient* client) -> std::atomic<bool>& {
+  static auto running(ControllerClient* client) -> std::atomic<bool>& {
     return client->running_;
   }
 
-  static auto command_queue(VescClient* client) -> std::deque<std::vector<std::uint8_t>>& {
+  static auto command_queue(ControllerClient* client) -> std::deque<std::vector<std::uint8_t>>& {
     return client->command_queue_;
   }
 
-  static auto due_watchdog_command(VescClient& client)
+  static auto due_watchdog_command(ControllerClient& client)
       -> std::optional<std::vector<std::uint8_t>> {
     return client.dequeue_due_watchdog_command(std::chrono::steady_clock::now());
   }
 
-  static auto imu_subscription_count(const VescClient& client) -> std::size_t {
+  static auto imu_subscription_count(const ControllerClient& client) -> std::size_t {
     const auto callbacks = client.callback_registry_;
     std::lock_guard lock(callbacks->mutex);
     return callbacks->imu_callbacks.size();
   }
 
-  static auto motor_subscription_count(const VescClient& client) -> std::size_t {
+  static auto motor_subscription_count(const ControllerClient& client) -> std::size_t {
     const auto callbacks = client.callback_registry_;
     std::lock_guard lock(callbacks->mutex);
     return callbacks->motor_callbacks.size();
   }
 
-  static auto io_thread_joinable(VescClient& client) -> bool {
+  static auto io_thread_joinable(ControllerClient& client) -> bool {
     return client.io_thread_.joinable();
   }
 
-  static auto fd(const VescClient& client) -> int {
+  static auto fd(const ControllerClient& client) -> int {
     return client.fd_;
   }
 
-  static auto wake_read_fd(const VescClient& client) -> int {
+  static auto wake_read_fd(const ControllerClient& client) -> int {
     return client.wake_pipe_[0];
   }
 
-  static auto wake_write_fd(const VescClient& client) -> int {
+  static auto wake_write_fd(const ControllerClient& client) -> int {
     return client.wake_pipe_[1];
   }
 };
 
-} // namespace goat_vesc
+} // namespace goat_motor_controller
 
 namespace {
 
-using namespace goat_vesc;
+using namespace goat_motor_controller;
 using namespace std::chrono_literals;
 using namespace test_support;
 
 std::vector<std::uint8_t> make_fw_response() {
   return frame_payload({
-      static_cast<std::uint8_t>(VescPacketCommID::FwVersion),
+      static_cast<std::uint8_t>(CommandId::FwVersion),
       6,
       5,
   });
@@ -97,7 +97,7 @@ std::vector<std::uint8_t> make_fw_response() {
 
 std::vector<std::uint8_t> make_imu_response(float seed) {
   std::vector<std::uint8_t> payload;
-  payload.push_back(static_cast<std::uint8_t>(VescPacketCommID::GetImuData));
+  payload.push_back(static_cast<std::uint8_t>(CommandId::GetImuData));
   append_u16(payload, 0xFFFFU);
   for (int i = 0; i < 16; ++i) {
     append_f32(payload, seed + static_cast<float>(i) * 0.25f);
@@ -107,7 +107,7 @@ std::vector<std::uint8_t> make_imu_response(float seed) {
 
 std::vector<std::uint8_t> make_values_response(std::int32_t rpm) {
   std::vector<std::uint8_t> payload;
-  payload.push_back(static_cast<std::uint8_t>(VescPacketCommID::GetValues));
+  payload.push_back(static_cast<std::uint8_t>(CommandId::GetValues));
   append_i16(payload, 325);
   append_i16(payload, 301);
   append_i32(payload, 1234);
@@ -127,14 +127,14 @@ std::vector<std::uint8_t> make_values_response(std::int32_t rpm) {
   return frame_payload(payload);
 }
 
-std::vector<std::uint8_t> make_config_response(VescPacketCommID id,
+std::vector<std::uint8_t> make_config_response(CommandId id,
                                                const std::vector<std::uint8_t>& image) {
   std::vector<std::uint8_t> payload{static_cast<std::uint8_t>(id)};
   payload.insert(payload.end(), image.begin(), image.end());
   return frame_payload(payload);
 }
 
-std::vector<std::uint8_t> make_bool_ack(VescPacketCommID id, bool accepted) {
+std::vector<std::uint8_t> make_bool_ack(CommandId id, bool accepted) {
   return frame_payload({
       static_cast<std::uint8_t>(id),
       static_cast<std::uint8_t>(accepted),
@@ -551,7 +551,7 @@ struct FakeVesc {
 
 private:
   void run() {
-    VescPacketParser parser;
+    PacketParser parser;
     float imu_seed = 1.0f;
     std::int32_t rpm_value = 1400;
 
@@ -562,21 +562,21 @@ private:
         for (ssize_t i = 0; i < n; ++i) {
           if (auto payload = parser.feed_byte(buffer[static_cast<std::size_t>(i)])) {
             const auto id = payload->front();
-            if (id == static_cast<std::uint8_t>(VescPacketCommID::GetImuData)) {
+            if (id == static_cast<std::uint8_t>(CommandId::GetImuData)) {
               const int count = ++imu_requests;
               if (count <= dropped_imu_replies_) {
                 continue;
               }
               write_all(server_fd_.get(), make_imu_response(imu_seed));
               imu_seed += 1.0f;
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::GetValues)) {
+            } else if (id == static_cast<std::uint8_t>(CommandId::GetValues)) {
               const int count = ++value_requests;
               if (count <= dropped_value_replies_) {
                 continue;
               }
               write_all(server_fd_.get(), make_values_response(rpm_value));
               rpm_value += 25;
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::FwVersion)) {
+            } else if (id == static_cast<std::uint8_t>(CommandId::FwVersion)) {
               const int request_index = fw_requests.fetch_add(1);
               if (!respond_fw_) {
                 continue;
@@ -591,14 +591,14 @@ private:
                 schedule_response(delay, make_fw_response());
               }
             } else if (id ==
-                       static_cast<std::uint8_t>(VescPacketCommID::GetMotorConfig)) {
+                       static_cast<std::uint8_t>(CommandId::GetMotorConfig)) {
               record_management(id);
               if (respond_to_management.load()) {
                 write_all(server_fd_.get(),
-                          make_config_response(VescPacketCommID::GetMotorConfig, motor_config_));
+                          make_config_response(CommandId::GetMotorConfig, motor_config_));
               }
             } else if (id ==
-                       static_cast<std::uint8_t>(VescPacketCommID::SetMotorConfig)) {
+                       static_cast<std::uint8_t>(CommandId::SetMotorConfig)) {
               record_management(id);
               ++motor_config_writes;
               if (respond_to_management.load() && payload->size() >= 5 &&
@@ -608,18 +608,18 @@ private:
                 write_all(server_fd_.get(), frame_payload({id}));
               }
             } else if (id ==
-                       static_cast<std::uint8_t>(VescPacketCommID::GetAppConfig)) {
+                       static_cast<std::uint8_t>(CommandId::GetAppConfig)) {
               record_management(id);
               ++app_config_reads;
               if (respond_to_management.load()) {
                 write_all(server_fd_.get(),
-                          make_config_response(VescPacketCommID::GetAppConfig, app_config_));
+                          make_config_response(CommandId::GetAppConfig, app_config_));
               }
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetAppConfig) ||
+            } else if (id == static_cast<std::uint8_t>(CommandId::SetAppConfig) ||
                        id ==
-                           static_cast<std::uint8_t>(VescPacketCommID::SetAppConfigNoStore)) {
+                           static_cast<std::uint8_t>(CommandId::SetAppConfigNoStore)) {
               record_management(id);
-              if (id == static_cast<std::uint8_t>(VescPacketCommID::SetAppConfig)) {
+              if (id == static_cast<std::uint8_t>(CommandId::SetAppConfig)) {
                 ++app_config_persistent_writes;
               } else {
                 ++app_config_volatile_writes;
@@ -630,7 +630,7 @@ private:
                 app_config_.assign(payload->begin() + 1, payload->end());
                 write_all(server_fd_.get(), frame_payload({id}));
               }
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::LispReadCode)) {
+            } else if (id == static_cast<std::uint8_t>(CommandId::LispReadCode)) {
               record_management(id);
               ++lisp_reads;
               if (!respond_to_management.load() || payload->size() != 9) {
@@ -652,15 +652,15 @@ private:
                              lisp_code_.begin() + offset + length);
                 write_all(server_fd_.get(), frame_payload(reply));
               }
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::LispEraseCode)) {
+            } else if (id == static_cast<std::uint8_t>(CommandId::LispEraseCode)) {
               record_management(id);
               ++lisp_erases;
               if (respond_to_management.load()) {
                 lisp_code_.clear();
                 packed_lisp_.clear();
-                write_all(server_fd_.get(), make_bool_ack(VescPacketCommID::LispEraseCode, true));
+                write_all(server_fd_.get(), make_bool_ack(CommandId::LispEraseCode, true));
               }
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::LispWriteCode)) {
+            } else if (id == static_cast<std::uint8_t>(CommandId::LispWriteCode)) {
               record_management(id);
               ++lisp_writes;
               if (!respond_to_management.load() || payload->size() < 6) {
@@ -685,21 +685,21 @@ private:
               std::vector<std::uint8_t> reply{id, static_cast<std::uint8_t>(accepted)};
               append_i32(reply, static_cast<std::int32_t>(offset));
               write_all(server_fd_.get(), frame_payload(reply));
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::LispSetRunning)) {
+            } else if (id == static_cast<std::uint8_t>(CommandId::LispSetRunning)) {
               record_management(id);
               ++lisp_run_commands;
               if (respond_to_management.load() && payload->size() == 2) {
-                write_all(server_fd_.get(), make_bool_ack(VescPacketCommID::LispSetRunning, true));
+                write_all(server_fd_.get(), make_bool_ack(CommandId::LispSetRunning, true));
               }
             } else if (id ==
-                           static_cast<std::uint8_t>(VescPacketCommID::AppDisableOutput) &&
+                           static_cast<std::uint8_t>(CommandId::AppDisableOutput) &&
                        payload->size() == 6) {
               record_management(id);
               ++app_disable_commands;
               std::lock_guard lock(app_disable_mutex_);
               app_disable_durations_.push_back(read_i32(*payload, 2));
             } else if (id ==
-                           static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc) &&
+                           static_cast<std::uint8_t>(CommandId::DetectApplyAllFoc) &&
                        payload->size() == 22) {
               record_management(id);
               ++foc_requests;
@@ -708,9 +708,9 @@ private:
               }
               if (send_unsolicited_foc_configs.load()) {
                 write_all(server_fd_.get(),
-                          make_config_response(VescPacketCommID::GetMotorConfig, motor_config_));
+                          make_config_response(CommandId::GetMotorConfig, motor_config_));
                 write_all(server_fd_.get(),
-                          make_config_response(VescPacketCommID::GetAppConfig, app_config_));
+                          make_config_response(CommandId::GetAppConfig, app_config_));
               }
               std::vector<std::uint8_t> reply{id};
               append_i16(reply, foc_result.load());
@@ -724,22 +724,22 @@ private:
               } else {
                 write_all(server_fd_.get(), framed);
               }
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetRpm) &&
+            } else if (id == static_cast<std::uint8_t>(CommandId::SetRpm) &&
                        payload->size() == 5) {
               ++rpm_commands;
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetCurrent) &&
+            } else if (id == static_cast<std::uint8_t>(CommandId::SetCurrent) &&
                        payload->size() == 5) {
               last_current_raw.store(read_i32(*payload, 1));
               ++current_commands;
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetDuty) &&
+            } else if (id == static_cast<std::uint8_t>(CommandId::SetDuty) &&
                        payload->size() == 5) {
               last_duty_raw.store(read_i32(*payload, 1));
               ++duty_commands;
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetCurrentBrake) &&
+            } else if (id == static_cast<std::uint8_t>(CommandId::SetCurrentBrake) &&
                        payload->size() == 5) {
               last_brake_current_raw.store(read_i32(*payload, 1));
               ++brake_current_commands;
-            } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetServoPos) &&
+            } else if (id == static_cast<std::uint8_t>(CommandId::SetServoPos) &&
                        payload->size() == 3) {
               last_servo_raw.store(read_i16(*payload, 1));
               ++servo_commands;
@@ -796,9 +796,9 @@ private:
   }
 };
 
-template <typename FakeTransport> VescConfig config_for(FakeTransport& fake) {
-  VescConfig config;
-  config.open_serial_fn = [&fake](const VescConfig&, int& fd_out) {
+template <typename FakeTransport> ControllerConfig config_for(FakeTransport& fake) {
+  ControllerConfig config;
+  config.open_serial_fn = [&fake](const ControllerConfig&, int& fd_out) {
     return fake.open_client_fd(fd_out);
   };
   return config;
@@ -815,11 +815,11 @@ void test_client_polling_and_subscriptions() {
   config.query_guard_window = 5ms;
   config.wall_time_ns = [&stamp_counter] { return stamp_counter.fetch_add(1000); };
 
-  VescClient client(config);
+  ControllerClient client(config);
   std::atomic<int> imu_callbacks{0};
   std::atomic<int> current_from_callback{0};
 
-  auto imu_handle = client.subscribe_imu([&](const VescIMUData& data) {
+  auto imu_handle = client.subscribe_imu([&](const ImuData& data) {
     ++imu_callbacks;
     assert(data.stamp_ns >= 1000);
     (void)client.latest_imu();
@@ -828,7 +828,7 @@ void test_client_polling_and_subscriptions() {
     }
   });
 
-  auto motor_handle = client.subscribe_motor_state([&](const VescMotorState& state) {
+  auto motor_handle = client.subscribe_motor_state([&](const MotorState& state) {
     assert(state.stamp_ns >= 1000);
     assert(state.vin > 0.0f);
   });
@@ -896,16 +896,16 @@ void test_callback_failures_and_reentrant_shutdown_are_contained() {
   config.imu_poll_interval = 10ms;
   config.motor_poll_interval = 0ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   std::atomic<int> throwing_callbacks{0};
   std::atomic<bool> callback_returned{false};
   std::atomic<bool> callback_query_was_empty{false};
 
-  auto throwing_handle = client.subscribe_imu([&](const VescIMUData&) {
+  auto throwing_handle = client.subscribe_imu([&](const ImuData&) {
     ++throwing_callbacks;
     throw std::runtime_error("subscriber failure");
   });
-  auto shutdown_handle = client.subscribe_imu([&](const VescIMUData&) {
+  auto shutdown_handle = client.subscribe_imu([&](const ImuData&) {
     if (callback_returned.load()) {
       return;
     }
@@ -923,8 +923,8 @@ void test_callback_failures_and_reentrant_shutdown_are_contained() {
              "callback disconnect did not stop the I/O loop");
 
   client.disconnect();
-  assert(!VescClientTestAccess::io_thread_joinable(client));
-  assert(VescClientTestAccess::fd(client) == -1);
+  assert(!ControllerClientTestAccess::io_thread_joinable(client));
+  assert(ControllerClientTestAccess::fd(client) == -1);
 
   (void)throwing_handle;
   (void)shutdown_handle;
@@ -938,16 +938,16 @@ void test_subscription_cleanup_after_disconnect() {
   config.poll_response_timeout = 15ms;
   config.query_guard_window = 5ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   std::atomic<int> imu_callbacks{0};
   std::atomic<int> motor_callbacks{0};
 
-  auto imu_handle = client.subscribe_imu([&](const VescIMUData&) { ++imu_callbacks; });
+  auto imu_handle = client.subscribe_imu([&](const ImuData&) { ++imu_callbacks; });
   auto motor_handle =
-      client.subscribe_motor_state([&](const VescMotorState&) { ++motor_callbacks; });
+      client.subscribe_motor_state([&](const MotorState&) { ++motor_callbacks; });
 
-  assert(VescClientTestAccess::imu_subscription_count(client) == 1);
-  assert(VescClientTestAccess::motor_subscription_count(client) == 1);
+  assert(ControllerClientTestAccess::imu_subscription_count(client) == 1);
+  assert(ControllerClientTestAccess::motor_subscription_count(client) == 1);
 
   assert(client.connect());
   wait_until([&] { return imu_callbacks.load() >= 1; }, 500ms, "imu callback never fired");
@@ -960,22 +960,22 @@ void test_subscription_cleanup_after_disconnect() {
 
   assert(!imu_handle);
   assert(!motor_handle);
-  assert(VescClientTestAccess::imu_subscription_count(client) == 0);
-  assert(VescClientTestAccess::motor_subscription_count(client) == 0);
+  assert(ControllerClientTestAccess::imu_subscription_count(client) == 0);
+  assert(ControllerClientTestAccess::motor_subscription_count(client) == 0);
   assert(!client.is_connected());
 }
 
 void test_subscription_handle_can_outlive_client_destruction() {
-  std::optional<VescClient::SubscriptionHandle> imu_handle;
-  std::optional<VescClient::SubscriptionHandle> motor_handle;
+  std::optional<ControllerClient::SubscriptionHandle> imu_handle;
+  std::optional<ControllerClient::SubscriptionHandle> motor_handle;
 
   {
-    VescClient client(VescConfig{});
-    imu_handle.emplace(client.subscribe_imu([](const VescIMUData&) {}));
-    motor_handle.emplace(client.subscribe_motor_state([](const VescMotorState&) {}));
+    ControllerClient client(ControllerConfig{});
+    imu_handle.emplace(client.subscribe_imu([](const ImuData&) {}));
+    motor_handle.emplace(client.subscribe_motor_state([](const MotorState&) {}));
 
-    assert(VescClientTestAccess::imu_subscription_count(client) == 1);
-    assert(VescClientTestAccess::motor_subscription_count(client) == 1);
+    assert(ControllerClientTestAccess::imu_subscription_count(client) == 1);
+    assert(ControllerClientTestAccess::motor_subscription_count(client) == 1);
   }
 
   assert(imu_handle.has_value());
@@ -996,7 +996,7 @@ void test_poll_timeout_recovers() {
   config.poll_response_timeout = 15ms;
   config.query_guard_window = 5ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
   wait_until([&] { return fake.imu_requests.load() >= 2; }, 500ms,
@@ -1016,7 +1016,7 @@ void test_imu_timeout_does_not_starve_motor_polling() {
   config.poll_response_timeout = 30ms;
   config.query_guard_window = 5ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
   wait_until([&] { return fake.imu_requests.load() >= 2; }, 500ms,
@@ -1037,7 +1037,7 @@ void test_control_command_delivery() {
   config.query_guard_window = 5ms;
   config.max_brake_current = 1.0f;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
   assert(client.set_duty(0.2f));
@@ -1065,7 +1065,7 @@ void test_invalid_control_commands_are_rejected() {
   config.motor_poll_interval = 0ms;
   config.max_brake_current = 1.0f;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
   const float nan = std::numeric_limits<float>::quiet_NaN();
@@ -1089,40 +1089,40 @@ void test_invalid_control_commands_are_rejected() {
 }
 
 void test_control_queue_keeps_only_latest_command_per_type() {
-  VescClient client(VescConfig{});
-  VescClientTestAccess::running(&client).store(true);
+  ControllerClient client(ControllerConfig{});
+  ControllerClientTestAccess::running(&client).store(true);
 
   assert(client.set_rpm(1000));
   assert(client.set_rpm(2000));
   assert(client.set_duty(0.1f));
   assert(client.set_rpm(3000));
 
-  const auto& queue = VescClientTestAccess::command_queue(&client);
+  const auto& queue = ControllerClientTestAccess::command_queue(&client);
   assert(queue.size() == 2);
-  assert(queue[0][2] == static_cast<std::uint8_t>(VescPacketCommID::SetDuty));
-  assert(queue[1][2] == static_cast<std::uint8_t>(VescPacketCommID::SetRpm));
+  assert(queue[0][2] == static_cast<std::uint8_t>(CommandId::SetDuty));
+  assert(queue[1][2] == static_cast<std::uint8_t>(CommandId::SetRpm));
   assert(read_i32(queue[1], 3) == 3000);
 
-  VescClientTestAccess::running(&client).store(false);
+  ControllerClientTestAccess::running(&client).store(false);
 }
 
 void test_watchdog_discards_stale_control_backlog() {
-  VescConfig config;
+  ControllerConfig config;
   config.command_watchdog_timeout = 1ms;
   config.command_watchdog_action = ControlWatchdogAction::Coast;
 
-  VescClient client(config);
-  VescClientTestAccess::running(&client).store(true);
+  ControllerClient client(config);
+  ControllerClientTestAccess::running(&client).store(true);
   assert(client.set_rpm(1000));
   assert(client.set_duty(0.1f));
 
   std::this_thread::sleep_for(2ms);
-  const auto watchdog = VescClientTestAccess::due_watchdog_command(client);
+  const auto watchdog = ControllerClientTestAccess::due_watchdog_command(client);
   assert(watchdog.has_value());
   assert(!watchdog->empty());
-  assert(VescClientTestAccess::command_queue(&client).empty());
+  assert(ControllerClientTestAccess::command_queue(&client).empty());
 
-  VescClientTestAccess::running(&client).store(false);
+  ControllerClientTestAccess::running(&client).store(false);
 }
 
 void test_brake_current_command_requires_positive_limit() {
@@ -1133,7 +1133,7 @@ void test_brake_current_command_requires_positive_limit() {
   config.poll_response_timeout = 15ms;
   config.query_guard_window = 5ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
   assert(!client.set_current_brake(1.0f));
@@ -1157,7 +1157,7 @@ void test_watchdog_brake_current_safe_stop() {
   config.max_brake_current = 1.5f;
   config.command_watchdog_brake_current = 2.5f;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
   assert(client.set_rpm(1800));
@@ -1190,7 +1190,7 @@ void test_watchdog_coast_safe_stop() {
   config.command_watchdog_timeout = 30ms;
   config.command_watchdog_action = ControlWatchdogAction::Coast;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
   assert(client.set_duty(0.35f));
@@ -1209,17 +1209,17 @@ auto test_connect_disconnect_edges() -> void {
   FakeVesc fake;
   std::atomic<int> open_calls{0};
 
-  VescConfig config;
+  ControllerConfig config;
   config.imu_poll_interval = kNoPolling;
   config.motor_poll_interval = kNoPolling;
   config.poll_response_timeout = 15ms;
   config.query_guard_window = 5ms;
-  config.open_serial_fn = [&fake, &open_calls](const VescConfig&, int& fd_out) {
+  config.open_serial_fn = [&fake, &open_calls](const ControllerConfig&, int& fd_out) {
     ++open_calls;
     return fake.open_client_fd(fd_out);
   };
 
-  VescClient client(config);
+  ControllerClient client(config);
 
   client.disconnect();
   assert(!client.is_connected());
@@ -1255,13 +1255,13 @@ void test_concurrent_lifecycle_calls_are_serialized() {
   auto config = config_for(fake);
   config.imu_poll_interval = 0ms;
   config.motor_poll_interval = 0ms;
-  config.open_serial_fn = [&fake, &open_calls](const VescConfig&, int& fd_out) {
+  config.open_serial_fn = [&fake, &open_calls](const ControllerConfig&, int& fd_out) {
     ++open_calls;
     std::this_thread::sleep_for(20ms);
     return fake.open_client_fd(fd_out);
   };
 
-  VescClient client(config);
+  ControllerClient client(config);
   std::promise<void> start;
   const auto ready = start.get_future().share();
   auto first = std::async(std::launch::async, [&] {
@@ -1300,7 +1300,7 @@ auto test_runtime_poll_interval_updates() -> void {
   config.query_guard_window = 5ms;
   config.wall_time_ns = [&stamp_counter] { return stamp_counter.fetch_add(kStampStepNs); };
 
-  VescClient client(config);
+  ControllerClient client(config);
   const bool connected = client.connect();
   assert(connected);
 
@@ -1363,7 +1363,7 @@ void test_shorter_poll_interval_takes_effect_immediately() {
   config.imu_poll_interval = 0ms;
   config.motor_poll_interval = 10s;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
   wait_until([&] { return fake.value_requests.load() == 1; }, 500ms,
              "initial motor poll did not run");
@@ -1375,7 +1375,7 @@ void test_shorter_poll_interval_takes_effect_immediately() {
 }
 
 auto test_config_snapshot_tracks_runtime_polling_behavior() -> void {
-  VescConfig config;
+  ControllerConfig config;
   config.imu_poll_interval = 20ms;
   config.motor_poll_interval = 35ms;
   config.poll_response_timeout = 15ms;
@@ -1385,7 +1385,7 @@ auto test_config_snapshot_tracks_runtime_polling_behavior() -> void {
   config.max_brake_current = 3.0f;
   config.command_watchdog_brake_current = 2.5f;
 
-  VescClient client(config);
+  ControllerClient client(config);
 
   const auto initial = client.config_snapshot();
   assert(initial.imu_poll_interval == 20ms);
@@ -1427,7 +1427,7 @@ auto test_concurrent_poll_updates_keep_client_responsive() -> void {
   config.query_guard_window = 2ms;
   config.wall_time_ns = [&stamp_counter] { return stamp_counter.fetch_add(kStampStepNs); };
 
-  VescClient client(config);
+  ControllerClient client(config);
   const bool connected = client.connect();
   assert(connected);
 
@@ -1496,7 +1496,7 @@ void test_configuration_management_and_polling() {
   config.poll_response_timeout = 10ms;
   config.query_guard_window = 2ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
   wait_until([&] { return fake.imu_requests.load() >= 2; }, 500ms,
              "polling did not start before configuration operations");
@@ -1507,17 +1507,17 @@ void test_configuration_management_and_polling() {
 
   auto updated_motor = *motor;
   updated_motor.bytes.back() = 0x22;
-  assert(client.write_motor_config(updated_motor, 500ms) == VescOperationResult::Success);
+  assert(client.write_motor_config(updated_motor, 500ms) == OperationResult::Success);
   assert(client.request_motor_config(500ms)->bytes == updated_motor.bytes);
 
   auto incompatible_motor = updated_motor;
   incompatible_motor.bytes.front() ^= 0xFF;
   const auto writes_before_rejection = fake.motor_config_writes.load();
   assert(client.write_motor_config(incompatible_motor, 500ms) ==
-         VescOperationResult::IncompatibleData);
+         OperationResult::IncompatibleData);
   assert(fake.motor_config_writes.load() == writes_before_rejection);
   assert(client.write_motor_config(MotorConfigImage{{1, 2, 3}}, 500ms) ==
-         VescOperationResult::InvalidData);
+         OperationResult::InvalidData);
 
   const auto app = client.request_app_config(500ms);
   assert(app &&
@@ -1526,13 +1526,13 @@ void test_configuration_management_and_polling() {
   auto volatile_app = *app;
   volatile_app.bytes.back() = 0x33;
   assert(client.write_app_config(volatile_app, AppConfigStorage::Volatile, 500ms) ==
-         VescOperationResult::Success);
+         OperationResult::Success);
   assert(fake.app_config_volatile_writes.load() == 1);
 
   auto persistent_app = volatile_app;
   persistent_app.bytes.back() = 0x44;
   assert(client.write_app_config(persistent_app, AppConfigStorage::Persistent, 500ms) ==
-         VescOperationResult::Success);
+         OperationResult::Success);
   assert(fake.app_config_persistent_writes.load() == 1);
   assert(client.request_app_config(500ms)->bytes == persistent_app.bytes);
 
@@ -1548,7 +1548,7 @@ void test_management_operations_are_serialized() {
   config.imu_poll_interval = 0ms;
   config.motor_poll_interval = 0ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
   const auto current = client.request_app_config(500ms);
   assert(current);
@@ -1566,14 +1566,14 @@ void test_management_operations_are_serialized() {
     return client.write_app_config(second, AppConfigStorage::Persistent, 500ms);
   });
 
-  assert(first_write.get() == VescOperationResult::Success);
-  assert(second_write.get() == VescOperationResult::Success);
+  assert(first_write.get() == OperationResult::Success);
+  assert(second_write.get() == OperationResult::Success);
   const auto history = fake.management_history();
   assert(history == std::vector<std::uint8_t>({
-                        static_cast<std::uint8_t>(VescPacketCommID::GetAppConfig),
-                        static_cast<std::uint8_t>(VescPacketCommID::SetAppConfig),
-                        static_cast<std::uint8_t>(VescPacketCommID::GetAppConfig),
-                        static_cast<std::uint8_t>(VescPacketCommID::SetAppConfig),
+                        static_cast<std::uint8_t>(CommandId::GetAppConfig),
+                        static_cast<std::uint8_t>(CommandId::SetAppConfig),
+                        static_cast<std::uint8_t>(CommandId::GetAppConfig),
+                        static_cast<std::uint8_t>(CommandId::SetAppConfig),
                     }));
   client.disconnect();
 }
@@ -1584,7 +1584,7 @@ void test_lisp_management() {
   config.imu_poll_interval = 0ms;
   config.motor_poll_interval = 0ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
   const auto original = client.request_lisp_code(500ms);
@@ -1592,22 +1592,22 @@ void test_lisp_management() {
   assert(fake.lisp_reads.load() == 3);
 
   LispCodeImage replacement{std::vector<std::uint8_t>(800, 0x3A)};
-  assert(client.write_lisp_code(replacement, 1s) == VescOperationResult::Success);
+  assert(client.write_lisp_code(replacement, 1s) == OperationResult::Success);
   assert(fake.lisp_erases.load() == 1);
   assert(fake.lisp_writes.load() == 3);
   const auto reread = client.request_lisp_code(1s);
   assert(reread && reread->bytes == replacement.bytes);
 
-  assert(client.set_lisp_running(false, 500ms) == VescOperationResult::Success);
-  assert(client.set_lisp_running(true, 500ms) == VescOperationResult::Success);
+  assert(client.set_lisp_running(false, 500ms) == OperationResult::Success);
+  assert(client.set_lisp_running(true, 500ms) == OperationResult::Success);
   assert(fake.lisp_run_commands.load() == 2);
 
   fake.reject_lisp_write.store(true);
-  assert(client.write_lisp_code(replacement, 1s) == VescOperationResult::Rejected);
+  assert(client.write_lisp_code(replacement, 1s) == OperationResult::Rejected);
   assert(client.write_lisp_code(LispCodeImage{}, 500ms) ==
-         VescOperationResult::InvalidData);
+         OperationResult::InvalidData);
 
-  assert(client.erase_lisp_code(500ms) == VescOperationResult::Success);
+  assert(client.erase_lisp_code(500ms) == OperationResult::Success);
   const auto empty = client.request_lisp_code(500ms);
   assert(empty && empty->bytes.empty());
   client.disconnect();
@@ -1619,14 +1619,14 @@ void test_foc_calibration_and_polling() {
   config.imu_poll_interval = 15ms;
   config.motor_poll_interval = 0ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
   wait_until([&] { return fake.imu_requests.load() >= 2; }, 500ms,
              "polling did not start before FOC calibration");
 
   const FocCalibrationParameters parameters{50.0f, 0.0f, 0.0f, 0.0f, 0.0f};
   const auto success = client.run_foc_calibration(parameters, 500ms);
-  assert(success.operation == VescOperationResult::Success);
+  assert(success.operation == OperationResult::Success);
   assert(success.firmware_code == 0);
   wait_until([&] { return fake.app_disable_commands.load() == 2; }, 500ms,
              "FOC calibration did not reenable application output");
@@ -1636,18 +1636,18 @@ void test_foc_calibration_and_polling() {
   auto invalid = parameters;
   invalid.max_power_loss_w = std::numeric_limits<float>::quiet_NaN();
   const auto invalid_result = client.run_foc_calibration(invalid, 500ms);
-  assert(invalid_result.operation == VescOperationResult::InvalidData);
+  assert(invalid_result.operation == OperationResult::InvalidData);
   assert(!invalid_result.firmware_code);
   assert(fake.foc_requests.load() == requests_before_invalid);
 
   fake.foc_result.store(-10);
   const auto rejected = client.run_foc_calibration(parameters, 500ms);
-  assert(rejected.operation == VescOperationResult::Rejected);
+  assert(rejected.operation == OperationResult::Rejected);
   assert(rejected.firmware_code == -10);
 
   fake.malformed_foc_reply.store(true);
   const auto malformed = client.run_foc_calibration(parameters, 500ms);
-  assert(malformed.operation == VescOperationResult::Rejected);
+  assert(malformed.operation == OperationResult::Rejected);
   assert(!malformed.firmware_code);
 
   const auto polls_before = fake.imu_requests.load();
@@ -1662,7 +1662,7 @@ void test_foc_calibration_serializes_with_management_operations() {
   config.imu_poll_interval = 0ms;
   config.motor_poll_interval = 0ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
   const auto app = client.request_app_config(500ms);
   assert(app);
@@ -1681,17 +1681,17 @@ void test_foc_calibration_serializes_with_management_operations() {
     return client.write_app_config(updated_app, AppConfigStorage::Persistent, 500ms);
   });
 
-  assert(calibration.get().operation == VescOperationResult::Success);
-  assert(app_write.get() == VescOperationResult::Success);
+  assert(calibration.get().operation == OperationResult::Success);
+  assert(app_write.get() == OperationResult::Success);
   wait_until([&] { return fake.app_disable_commands.load() == 2; }, 250ms,
              "application output reenable was not sent");
   assert(fake.management_history() ==
          std::vector<std::uint8_t>({
-             static_cast<std::uint8_t>(VescPacketCommID::AppDisableOutput),
-             static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc),
-             static_cast<std::uint8_t>(VescPacketCommID::AppDisableOutput),
-             static_cast<std::uint8_t>(VescPacketCommID::GetAppConfig),
-             static_cast<std::uint8_t>(VescPacketCommID::SetAppConfig),
+             static_cast<std::uint8_t>(CommandId::AppDisableOutput),
+             static_cast<std::uint8_t>(CommandId::DetectApplyAllFoc),
+             static_cast<std::uint8_t>(CommandId::AppDisableOutput),
+             static_cast<std::uint8_t>(CommandId::GetAppConfig),
+             static_cast<std::uint8_t>(CommandId::SetAppConfig),
          }));
   client.disconnect();
 }
@@ -1702,12 +1702,12 @@ void test_foc_calibration_timeout_stops_connection() {
   config.imu_poll_interval = 0ms;
   config.motor_poll_interval = 0ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
   fake.respond_to_management.store(false);
   const auto result =
       client.run_foc_calibration({50.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 30ms);
-  assert(result.operation == VescOperationResult::NoReply);
+  assert(result.operation == OperationResult::NoReply);
   assert(!result.firmware_code);
   wait_until([&] { return !client.is_connected(); }, 250ms,
              "FOC timeout did not stop the connection");
@@ -1722,10 +1722,10 @@ void test_management_timeout_stops_connection() {
   config.imu_poll_interval = 0ms;
   config.motor_poll_interval = 0ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
-  auto& management_mutex = VescClientTestAccess::management_mutex(&client);
+  auto& management_mutex = ControllerClientTestAccess::management_mutex(&client);
   std::unique_lock held(management_mutex);
   auto lock_timeout =
       std::async(std::launch::async, [&client] { return client.request_app_config(30ms); });
@@ -1738,7 +1738,7 @@ void test_management_timeout_stops_connection() {
   wait_until([&] { return !client.is_connected(); }, 250ms,
              "management timeout did not stop the connection");
   assert(client.write_app_config(AppConfigImage{{1, 2, 3, 4}}, AppConfigStorage::Persistent,
-                                 50ms) == VescOperationResult::NoReply);
+                                 50ms) == OperationResult::NoReply);
   client.disconnect();
 }
 
@@ -1750,7 +1750,7 @@ void test_queued_query_deadline_expires_while_older_query_waits() {
   config.poll_response_timeout = 20ms;
   config.query_guard_window = 5ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
   auto first =
@@ -1785,7 +1785,7 @@ void test_fw_query_recovers_after_timeout_and_late_reply() {
   config.poll_response_timeout = 20ms;
   config.query_guard_window = 5ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
   const auto first = client.request_fw_version(20ms);
@@ -1814,7 +1814,7 @@ void test_disconnect_unblocks_query() {
   config.poll_response_timeout = 20ms;
   config.query_guard_window = 5ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
   auto future =
@@ -1834,7 +1834,7 @@ void test_disconnect_unblocks_blocked_write_wait() {
   config.poll_response_timeout = 20ms;
   config.query_guard_window = 5ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
   fake.fill_send_buffer();
@@ -1861,9 +1861,9 @@ void test_disconnect_unblocks_blocked_write_wait() {
 }
 
 void test_command_rejected_after_disconnect_state_wins_queue_race() {
-  VescClient client(VescConfig{});
-  auto& scheduler_mutex = VescClientTestAccess::scheduler_mutex(&client);
-  auto& running = VescClientTestAccess::running(&client);
+  ControllerClient client(ControllerConfig{});
+  auto& scheduler_mutex = ControllerClientTestAccess::scheduler_mutex(&client);
+  auto& running = ControllerClientTestAccess::running(&client);
 
   std::unique_lock scheduler_lock(scheduler_mutex);
   running.store(true);
@@ -1877,13 +1877,13 @@ void test_command_rejected_after_disconnect_state_wins_queue_race() {
   scheduler_lock.unlock();
 
   assert(!submit.get());
-  assert(VescClientTestAccess::command_queue(&client).empty());
+  assert(ControllerClientTestAccess::command_queue(&client).empty());
 }
 
 void test_query_rejected_after_disconnect_state_wins_queue_race() {
-  VescClient client(VescConfig{});
-  auto& scheduler_mutex = VescClientTestAccess::scheduler_mutex(&client);
-  auto& running = VescClientTestAccess::running(&client);
+  ControllerClient client(ControllerConfig{});
+  auto& scheduler_mutex = ControllerClientTestAccess::scheduler_mutex(&client);
+  auto& running = ControllerClientTestAccess::running(&client);
 
   std::unique_lock scheduler_lock(scheduler_mutex);
   running.store(true);
@@ -1908,9 +1908,9 @@ void test_disconnect_cleans_up_after_async_transport_failure() {
   config.poll_response_timeout = 20ms;
   config.query_guard_window = 5ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
-  assert(VescClientTestAccess::io_thread_joinable(client));
+  assert(ControllerClientTestAccess::io_thread_joinable(client));
 
   assert(client.set_rpm(1234));
   wait_until([&] { return !client.is_connected(); }, 500ms,
@@ -1920,10 +1920,10 @@ void test_disconnect_cleans_up_after_async_transport_failure() {
   client.disconnect();
 
   assert(!client.is_connected());
-  assert(!VescClientTestAccess::io_thread_joinable(client));
-  assert(VescClientTestAccess::fd(client) == -1);
-  assert(VescClientTestAccess::wake_read_fd(client) == -1);
-  assert(VescClientTestAccess::wake_write_fd(client) == -1);
+  assert(!ControllerClientTestAccess::io_thread_joinable(client));
+  assert(ControllerClientTestAccess::fd(client) == -1);
+  assert(ControllerClientTestAccess::wake_read_fd(client) == -1);
+  assert(ControllerClientTestAccess::wake_write_fd(client) == -1);
 }
 
 void test_query_write_failure_unblocks_caller() {
@@ -1932,7 +1932,7 @@ void test_query_write_failure_unblocks_caller() {
   config.imu_poll_interval = 0ms;
   config.motor_poll_interval = 0ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
 
   auto query =
@@ -1950,7 +1950,7 @@ void test_transport_eof_stops_client() {
   config.imu_poll_interval = 0ms;
   config.motor_poll_interval = 0ms;
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
   fake.close_peer();
   wait_until([&] { return !client.is_connected(); }, 500ms,
@@ -1965,39 +1965,39 @@ void test_custom_opener_failures_are_contained() {
   ScopedFd peer_fd(pipe_fds[1]);
   const int assigned_fd = client_fd.get();
 
-  VescConfig rejected_config;
-  rejected_config.open_serial_fn = [&client_fd](const VescConfig&, int& fd_out) {
+  ControllerConfig rejected_config;
+  rejected_config.open_serial_fn = [&client_fd](const ControllerConfig&, int& fd_out) {
     fd_out = client_fd.release();
     return false;
   };
-  VescClient rejected_client(rejected_config);
+  ControllerClient rejected_client(rejected_config);
   assert(!rejected_client.connect());
   assert(::fcntl(assigned_fd, F_GETFD) == -1);
   assert(errno == EBADF);
 
-  VescConfig throwing_config;
-  throwing_config.open_serial_fn = [](const VescConfig&, int&) -> bool {
+  ControllerConfig throwing_config;
+  throwing_config.open_serial_fn = [](const ControllerConfig&, int&) -> bool {
     throw std::runtime_error("opener failure");
   };
-  VescClient throwing_client(throwing_config);
+  ControllerClient throwing_client(throwing_config);
   assert(!throwing_client.connect());
 }
 
 void test_real_tty_empty_read_does_not_stop_client() {
   PseudoTerminal tty;
-  VescConfig config;
+  ControllerConfig config;
   config.device_path = tty.slave_path;
   config.imu_poll_interval = 0ms;
   config.motor_poll_interval = 0ms;
 
   auto invalid_baud_config = config;
   invalid_baud_config.baud = 12345;
-  VescClient invalid_baud_client(invalid_baud_config);
+  ControllerClient invalid_baud_client(invalid_baud_config);
   assert(!invalid_baud_client.connect());
 
-  VescClient client(config);
+  ControllerClient client(config);
   assert(client.connect());
-  const auto expected_request = VescProtocol::build_fw_version_request();
+  const auto expected_request = ControllerProtocol::build_fw_version_request();
   const auto round_trip = [&] {
     auto future =
         std::async(std::launch::async, [&client] { return client.request_fw_version(500ms); });
@@ -2030,7 +2030,7 @@ void test_destruction_after_async_transport_failure_is_safe() {
   config.query_guard_window = 5ms;
 
   {
-    VescClient client(config);
+    ControllerClient client(config);
     assert(client.connect());
     assert(client.set_rpm(1234));
     wait_until([&] { return !client.is_connected(); }, 500ms,

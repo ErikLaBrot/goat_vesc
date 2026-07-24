@@ -1,8 +1,8 @@
 #include "test_support.hpp"
 
-#include "goat_vesc/packet_parser.hpp"
-#include "goat_vesc/protocol_ids.hpp"
-#include "goat_vesc/vesc_protocol.hpp"
+#include "goat_motor_controller/packet_parser.hpp"
+#include "goat_motor_controller/protocol_ids.hpp"
+#include "goat_motor_controller/controller_protocol.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -15,7 +15,7 @@
 
 namespace {
 
-using namespace goat_vesc;
+using namespace goat_motor_controller;
 using namespace test_support;
 
 constexpr float kFloatTolerance = 1.0e-6f;
@@ -60,7 +60,7 @@ std::vector<std::uint8_t> make_long24_header(std::uint32_t payload_len) {
 
 std::vector<std::uint8_t> make_values_payload() {
   std::vector<std::uint8_t> payload;
-  payload.push_back(static_cast<std::uint8_t>(VescPacketCommID::GetValues));
+  payload.push_back(static_cast<std::uint8_t>(CommandId::GetValues));
   append_i16(payload, 325);
   append_i16(payload, -15);
   append_i32(payload, 1234);
@@ -84,7 +84,7 @@ std::vector<std::uint8_t> make_imu_payload(std::uint16_t mask,
                                            std::initializer_list<float> values) {
 
   std::vector<std::uint8_t> payload;
-  payload.push_back(static_cast<std::uint8_t>(VescPacketCommID::GetImuData));
+  payload.push_back(static_cast<std::uint8_t>(CommandId::GetImuData));
   append_u16(payload, mask);
   for (const auto value : values) {
     append_f32(payload, value);
@@ -93,71 +93,71 @@ std::vector<std::uint8_t> make_imu_payload(std::uint16_t mask,
 }
 
 void test_build_requests_exact_bytes() {
-  assert((VescProtocol::build_fw_version_request() ==
+  assert((ControllerProtocol::build_fw_version_request() ==
           std::vector<std::uint8_t>{0x02, 0x01, 0x00, 0x00, 0x00, 0x03}));
 
-  assert((VescProtocol::build_get_values_request() ==
+  assert((ControllerProtocol::build_get_values_request() ==
           std::vector<std::uint8_t>{0x02, 0x01, 0x04, 0x40, 0x84, 0x03}));
 
-  assert((VescProtocol::build_get_imu_data_request() ==
+  assert((ControllerProtocol::build_get_imu_data_request() ==
           std::vector<std::uint8_t>{0x02, 0x03, 0x41, 0xFF, 0xFF, 0x37, 0x92, 0x03}));
 }
 
 void test_build_management_requests_exact_bytes() {
-  assert(VescProtocol::build_get_motor_config_request() ==
-         frame_payload({static_cast<std::uint8_t>(VescPacketCommID::GetMotorConfig)}));
-  assert(VescProtocol::build_get_app_config_request() ==
-         frame_payload({static_cast<std::uint8_t>(VescPacketCommID::GetAppConfig)}));
+  assert(ControllerProtocol::build_get_motor_config_request() ==
+         frame_payload({static_cast<std::uint8_t>(CommandId::GetMotorConfig)}));
+  assert(ControllerProtocol::build_get_app_config_request() ==
+         frame_payload({static_cast<std::uint8_t>(CommandId::GetAppConfig)}));
 
   const MotorConfigImage motor{{0x11, 0x22, 0x33, 0x44, 0x55}};
-  assert(VescProtocol::build_set_motor_config_request(motor) ==
-         frame_payload({static_cast<std::uint8_t>(VescPacketCommID::SetMotorConfig),
+  assert(ControllerProtocol::build_set_motor_config_request(motor) ==
+         frame_payload({static_cast<std::uint8_t>(CommandId::SetMotorConfig),
                         0x11, 0x22, 0x33, 0x44, 0x55}));
 
   const AppConfigImage app{{0xAA, 0xBB, 0xCC, 0xDD, 0x01}};
-  assert(VescProtocol::build_set_app_config_request(app, AppConfigStorage::Persistent) ==
-         frame_payload({static_cast<std::uint8_t>(VescPacketCommID::SetAppConfig),
+  assert(ControllerProtocol::build_set_app_config_request(app, AppConfigStorage::Persistent) ==
+         frame_payload({static_cast<std::uint8_t>(CommandId::SetAppConfig),
                         0xAA, 0xBB, 0xCC, 0xDD, 0x01}));
-  assert(VescProtocol::build_set_app_config_request(app, AppConfigStorage::Volatile) ==
-         frame_payload({static_cast<std::uint8_t>(VescPacketCommID::SetAppConfigNoStore),
+  assert(ControllerProtocol::build_set_app_config_request(app, AppConfigStorage::Volatile) ==
+         frame_payload({static_cast<std::uint8_t>(CommandId::SetAppConfigNoStore),
                         0xAA, 0xBB, 0xCC, 0xDD, 0x01}));
 
   std::vector<std::uint8_t> read_lisp{
-      static_cast<std::uint8_t>(VescPacketCommID::LispReadCode)};
+      static_cast<std::uint8_t>(CommandId::LispReadCode)};
   append_i32(read_lisp, 400);
   append_i32(read_lisp, 10);
-  assert(VescProtocol::build_lisp_read_request(400, 10) == frame_payload(read_lisp));
+  assert(ControllerProtocol::build_lisp_read_request(400, 10) == frame_payload(read_lisp));
 
   std::vector<std::uint8_t> erase_lisp{
-      static_cast<std::uint8_t>(VescPacketCommID::LispEraseCode)};
+      static_cast<std::uint8_t>(CommandId::LispEraseCode)};
   append_i32(erase_lisp, 1234);
-  assert(VescProtocol::build_lisp_erase_request(1234) == frame_payload(erase_lisp));
+  assert(ControllerProtocol::build_lisp_erase_request(1234) == frame_payload(erase_lisp));
 
   std::vector<std::uint8_t> write_lisp{
-      static_cast<std::uint8_t>(VescPacketCommID::LispWriteCode)};
+      static_cast<std::uint8_t>(CommandId::LispWriteCode)};
   append_i32(write_lisp, 384);
   write_lisp.insert(write_lisp.end(), {0x10, 0x20, 0x30});
-  assert(VescProtocol::build_lisp_write_request({0x10, 0x20, 0x30}, 384) ==
+  assert(ControllerProtocol::build_lisp_write_request({0x10, 0x20, 0x30}, 384) ==
          frame_payload(write_lisp));
 
-  assert(VescProtocol::build_lisp_set_running_request(true) ==
-         frame_payload({static_cast<std::uint8_t>(VescPacketCommID::LispSetRunning), 1}));
+  assert(ControllerProtocol::build_lisp_set_running_request(true) ==
+         frame_payload({static_cast<std::uint8_t>(CommandId::LispSetRunning), 1}));
 
   FocCalibrationParameters calibration{50.0f, -12.5f, 30.0f, 1200.0f, 3500.0f};
   std::vector<std::uint8_t> calibrate{
-      static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc), 0};
+      static_cast<std::uint8_t>(CommandId::DetectApplyAllFoc), 0};
   append_i32(calibrate, 50000);
   append_i32(calibrate, -12500);
   append_i32(calibrate, 30000);
   append_i32(calibrate, 1200000);
   append_i32(calibrate, 3500000);
-  assert(VescProtocol::build_foc_calibration_request(calibration) ==
+  assert(ControllerProtocol::build_foc_calibration_request(calibration) ==
          frame_payload(calibrate));
 
   std::vector<std::uint8_t> disable{
-      static_cast<std::uint8_t>(VescPacketCommID::AppDisableOutput), 0};
+      static_cast<std::uint8_t>(CommandId::AppDisableOutput), 0};
   append_i32(disable, 185000);
-  assert(VescProtocol::build_app_disable_output_command(std::chrono::milliseconds(185000)) ==
+  assert(ControllerProtocol::build_app_disable_output_command(std::chrono::milliseconds(185000)) ==
          frame_payload(disable));
 
   const LispCodeImage code{{'(', ')', '\0'}};
@@ -166,128 +166,128 @@ void test_build_management_requests_exact_bytes() {
   append_i32(packed, 3);
   append_u16(packed, crc16ccitt(crc_input));
   packed.insert(packed.end(), crc_input.begin(), crc_input.end());
-  assert(VescProtocol::pack_lisp_code(code) == packed);
+  assert(ControllerProtocol::pack_lisp_code(code) == packed);
 }
 
 void test_management_protocol_validation() {
-  assert(VescProtocol::build_set_motor_config_request(MotorConfigImage{{1, 2, 3}}).empty());
-  assert(VescProtocol::build_set_app_config_request(AppConfigImage{{1, 2, 3}},
+  assert(ControllerProtocol::build_set_motor_config_request(MotorConfigImage{{1, 2, 3}}).empty());
+  assert(ControllerProtocol::build_set_app_config_request(AppConfigImage{{1, 2, 3}},
                                                     AppConfigStorage::Persistent)
              .empty());
-  assert(VescProtocol::build_set_motor_config_request(
+  assert(ControllerProtocol::build_set_motor_config_request(
              MotorConfigImage{std::vector<std::uint8_t>(kMaxPayloadBytes, 0)})
              .empty());
-  assert(VescProtocol::build_lisp_read_request(0, 0).empty());
-  assert(VescProtocol::build_lisp_read_request(kMaxPayloadBytes - 9, 0).empty());
-  assert(VescProtocol::build_lisp_write_request({}, 0).empty());
-  assert(VescProtocol::build_lisp_write_request(
+  assert(ControllerProtocol::build_lisp_read_request(0, 0).empty());
+  assert(ControllerProtocol::build_lisp_read_request(kMaxPayloadBytes - 9, 0).empty());
+  assert(ControllerProtocol::build_lisp_write_request({}, 0).empty());
+  assert(ControllerProtocol::build_lisp_write_request(
              std::vector<std::uint8_t>(kMaxPayloadBytes - 4, 0), 0)
              .empty());
-  assert(VescProtocol::pack_lisp_code(LispCodeImage{}).empty());
-  assert(VescProtocol::pack_lisp_code(
+  assert(ControllerProtocol::pack_lisp_code(LispCodeImage{}).empty());
+  assert(ControllerProtocol::pack_lisp_code(
              LispCodeImage{std::vector<std::uint8_t>(kMaxLispCodeBytes + 1, 0)})
              .empty());
-  assert(VescProtocol::build_set_app_config_request(
+  assert(ControllerProtocol::build_set_app_config_request(
              AppConfigImage{{1, 2, 3, 4}}, static_cast<AppConfigStorage>(99))
              .empty());
-  assert(VescProtocol::build_foc_calibration_request({}).empty());
-  assert(VescProtocol::build_foc_calibration_request({50.0f, 1.0f}).empty());
-  assert(VescProtocol::build_foc_calibration_request({50.0f, 0.0f, -1.0f}).empty());
-  assert(VescProtocol::build_foc_calibration_request({100000.0f}).empty());
-  assert(VescProtocol::build_foc_calibration_request({50.0f, -10000.0f}).empty());
-  assert(VescProtocol::build_foc_calibration_request({50.0f, 0.0f, 10000.0f}).empty());
+  assert(ControllerProtocol::build_foc_calibration_request({}).empty());
+  assert(ControllerProtocol::build_foc_calibration_request({50.0f, 1.0f}).empty());
+  assert(ControllerProtocol::build_foc_calibration_request({50.0f, 0.0f, -1.0f}).empty());
+  assert(ControllerProtocol::build_foc_calibration_request({100000.0f}).empty());
+  assert(ControllerProtocol::build_foc_calibration_request({50.0f, -10000.0f}).empty());
+  assert(ControllerProtocol::build_foc_calibration_request({50.0f, 0.0f, 10000.0f}).empty());
   assert(
-      VescProtocol::build_foc_calibration_request({50.0f, 0.0f, 0.0f, 1000000.0f})
+      ControllerProtocol::build_foc_calibration_request({50.0f, 0.0f, 0.0f, 1000000.0f})
           .empty());
-  assert(VescProtocol::build_foc_calibration_request(
+  assert(ControllerProtocol::build_foc_calibration_request(
              {50.0f, 0.0f, 0.0f, 0.0f, 1000000.0f})
              .empty());
-  assert(VescProtocol::build_foc_calibration_request(
+  assert(ControllerProtocol::build_foc_calibration_request(
              {50.0f, 0.0f, 0.0f, std::numeric_limits<float>::quiet_NaN(), 0.0f})
              .empty());
-  assert(VescProtocol::build_app_disable_output_command(std::chrono::milliseconds(-1)).empty());
+  assert(ControllerProtocol::build_app_disable_output_command(std::chrono::milliseconds(-1)).empty());
 
   const auto motor =
-      VescProtocol::parse_motor_config({static_cast<std::uint8_t>(
-                                            VescPacketCommID::GetMotorConfig),
+      ControllerProtocol::parse_motor_config({static_cast<std::uint8_t>(
+                                            CommandId::GetMotorConfig),
                                         1, 2, 3, 4, 5});
   assert(motor && motor->bytes == bytes({1, 2, 3, 4, 5}));
-  assert(!VescProtocol::parse_motor_config(
-              {static_cast<std::uint8_t>(VescPacketCommID::GetMotorConfig), 1, 2, 3})
+  assert(!ControllerProtocol::parse_motor_config(
+              {static_cast<std::uint8_t>(CommandId::GetMotorConfig), 1, 2, 3})
               .has_value());
 
-  assert(VescProtocol::parse_config_ack(
-      {static_cast<std::uint8_t>(VescPacketCommID::SetMotorConfig)},
-      VescPacketCommID::SetMotorConfig));
-  assert(!VescProtocol::parse_config_ack(
-      {static_cast<std::uint8_t>(VescPacketCommID::SetMotorConfig), 1},
-      VescPacketCommID::SetMotorConfig));
+  assert(ControllerProtocol::parse_config_ack(
+      {static_cast<std::uint8_t>(CommandId::SetMotorConfig)},
+      CommandId::SetMotorConfig));
+  assert(!ControllerProtocol::parse_config_ack(
+      {static_cast<std::uint8_t>(CommandId::SetMotorConfig), 1},
+      CommandId::SetMotorConfig));
 
   std::vector<std::uint8_t> read_reply{
-      static_cast<std::uint8_t>(VescPacketCommID::LispReadCode)};
+      static_cast<std::uint8_t>(CommandId::LispReadCode)};
   append_i32(read_reply, 12);
   append_i32(read_reply, 4);
   read_reply.insert(read_reply.end(), {0xA0, 0xA1, 0xA2});
   std::uint32_t total = 0;
   std::uint32_t offset = 0;
-  const auto chunk = VescProtocol::parse_lisp_read_reply(read_reply, total, offset);
+  const auto chunk = ControllerProtocol::parse_lisp_read_reply(read_reply, total, offset);
   assert(chunk == std::optional<std::vector<std::uint8_t>>({0xA0, 0xA1, 0xA2}));
   assert(total == 12);
   assert(offset == 4);
 
   read_reply[4] = 2;
-  assert(!VescProtocol::parse_lisp_read_reply(read_reply, total, offset).has_value());
+  assert(!ControllerProtocol::parse_lisp_read_reply(read_reply, total, offset).has_value());
 
   std::vector<std::uint8_t> write_ack{
-      static_cast<std::uint8_t>(VescPacketCommID::LispWriteCode), 1};
+      static_cast<std::uint8_t>(CommandId::LispWriteCode), 1};
   append_i32(write_ack, 384);
-  assert(VescProtocol::parse_lisp_write_ack(write_ack, 384));
-  assert(!VescProtocol::parse_lisp_write_ack(write_ack, 0));
+  assert(ControllerProtocol::parse_lisp_write_ack(write_ack, 384));
+  assert(!ControllerProtocol::parse_lisp_write_ack(write_ack, 0));
   write_ack[1] = 0;
-  assert(!VescProtocol::parse_lisp_write_ack(write_ack, 384));
+  assert(!ControllerProtocol::parse_lisp_write_ack(write_ack, 384));
   write_ack[1] = 2;
-  assert(!VescProtocol::parse_lisp_write_ack(write_ack, 384));
+  assert(!ControllerProtocol::parse_lisp_write_ack(write_ack, 384));
 
-  assert(VescProtocol::parse_bool_ack(
-      {static_cast<std::uint8_t>(VescPacketCommID::LispEraseCode), 1},
-      VescPacketCommID::LispEraseCode));
-  assert(!VescProtocol::parse_bool_ack(
-      {static_cast<std::uint8_t>(VescPacketCommID::LispEraseCode)},
-      VescPacketCommID::LispEraseCode));
+  assert(ControllerProtocol::parse_bool_ack(
+      {static_cast<std::uint8_t>(CommandId::LispEraseCode), 1},
+      CommandId::LispEraseCode));
+  assert(!ControllerProtocol::parse_bool_ack(
+      {static_cast<std::uint8_t>(CommandId::LispEraseCode)},
+      CommandId::LispEraseCode));
 
-  const auto foc_ok = VescProtocol::parse_foc_calibration_reply(
-      {static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc), 0, 2});
+  const auto foc_ok = ControllerProtocol::parse_foc_calibration_reply(
+      {static_cast<std::uint8_t>(CommandId::DetectApplyAllFoc), 0, 2});
   assert(foc_ok && *foc_ok == 2);
-  const auto foc_failed = VescProtocol::parse_foc_calibration_reply(
-      {static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc), 0xFF, 0xF6});
+  const auto foc_failed = ControllerProtocol::parse_foc_calibration_reply(
+      {static_cast<std::uint8_t>(CommandId::DetectApplyAllFoc), 0xFF, 0xF6});
   assert(foc_failed && *foc_failed == -10);
-  assert(!VescProtocol::parse_foc_calibration_reply(
-              {static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc), 0})
+  assert(!ControllerProtocol::parse_foc_calibration_reply(
+              {static_cast<std::uint8_t>(CommandId::DetectApplyAllFoc), 0})
               .has_value());
 
   MotorConfigImage long_config{std::vector<std::uint8_t>(300, 0x55)};
-  const auto framed = VescProtocol::build_set_motor_config_request(long_config);
+  const auto framed = ControllerProtocol::build_set_motor_config_request(long_config);
   assert(!framed.empty() && framed.front() == 0x03);
-  VescPacketParser parser;
+  PacketParser parser;
   const auto payloads = parser.feed_bytes(framed);
   assert(payloads.size() == 1);
   assert(payloads.front().size() == long_config.bytes.size() + 1);
 }
 
 void test_build_control_commands_exact_bytes() {
-  assert((VescProtocol::build_set_rpm_command(1000) ==
+  assert((ControllerProtocol::build_set_rpm_command(1000) ==
           std::vector<std::uint8_t>{0x02, 0x05, 0x08, 0x00, 0x00, 0x03, 0xE8, 0x2B, 0x58, 0x03}));
 
-  assert((VescProtocol::build_set_duty_command(0.2f) ==
+  assert((ControllerProtocol::build_set_duty_command(0.2f) ==
           std::vector<std::uint8_t>{0x02, 0x05, 0x05, 0x00, 0x00, 0x4E, 0x20, 0x29, 0xF6, 0x03}));
 
-  assert((VescProtocol::build_set_current_command(1.5f) ==
+  assert((ControllerProtocol::build_set_current_command(1.5f) ==
           std::vector<std::uint8_t>{0x02, 0x05, 0x06, 0x00, 0x00, 0x05, 0xDC, 0x38, 0x81, 0x03}));
 
-  assert((VescProtocol::build_set_current_brake_command(-1.5f) ==
+  assert((ControllerProtocol::build_set_current_brake_command(-1.5f) ==
           std::vector<std::uint8_t>{0x02, 0x05, 0x07, 0xFF, 0xFF, 0xFA, 0x24, 0x7B, 0xF8, 0x03}));
 
-  assert((VescProtocol::build_set_servo_pos_command(0.5f) ==
+  assert((ControllerProtocol::build_set_servo_pos_command(0.5f) ==
           std::vector<std::uint8_t>{0x02, 0x03, 0x0C, 0x01, 0xF4, 0xE9, 0xCB, 0x03}));
 }
 
@@ -296,17 +296,17 @@ void test_control_builders_reject_invalid_floats() {
   const float infinity = std::numeric_limits<float>::infinity();
   const float largest = std::numeric_limits<float>::max();
 
-  assert(VescProtocol::build_set_duty_command(nan).empty());
-  assert(VescProtocol::build_set_duty_command(1.01f).empty());
-  assert(VescProtocol::build_set_current_command(infinity).empty());
-  assert(VescProtocol::build_set_current_brake_command(largest).empty());
-  assert(VescProtocol::build_set_servo_pos_command(-0.01f).empty());
-  assert(VescProtocol::build_set_servo_pos_command(nan).empty());
+  assert(ControllerProtocol::build_set_duty_command(nan).empty());
+  assert(ControllerProtocol::build_set_duty_command(1.01f).empty());
+  assert(ControllerProtocol::build_set_current_command(infinity).empty());
+  assert(ControllerProtocol::build_set_current_brake_command(largest).empty());
+  assert(ControllerProtocol::build_set_servo_pos_command(-0.01f).empty());
+  assert(ControllerProtocol::build_set_servo_pos_command(nan).empty());
 }
 
 void test_parse_fw_version() {
-  const auto parsed = VescProtocol::parse_fw_version({
-      static_cast<std::uint8_t>(VescPacketCommID::FwVersion),
+  const auto parsed = ControllerProtocol::parse_fw_version({
+      static_cast<std::uint8_t>(CommandId::FwVersion),
       6,
       5,
   });
@@ -314,21 +314,21 @@ void test_parse_fw_version() {
   assert(parsed->major == 6);
   assert(parsed->minor == 5);
 
-  assert(!VescProtocol::parse_fw_version({
-              static_cast<std::uint8_t>(VescPacketCommID::GetValues),
+  assert(!ControllerProtocol::parse_fw_version({
+              static_cast<std::uint8_t>(CommandId::GetValues),
               6,
               5,
           })
               .has_value());
-  assert(!VescProtocol::parse_fw_version({
-              static_cast<std::uint8_t>(VescPacketCommID::FwVersion),
+  assert(!ControllerProtocol::parse_fw_version({
+              static_cast<std::uint8_t>(CommandId::FwVersion),
               6,
           })
               .has_value());
 }
 
 void test_parse_get_values() {
-  const auto parsed = VescProtocol::parse_get_values(make_values_payload());
+  const auto parsed = ControllerProtocol::parse_get_values(make_values_payload());
   assert(parsed.has_value());
   expect_near(parsed->temp_fet, 32.5f);
   expect_near(parsed->temp_motor, -1.5f);
@@ -341,14 +341,14 @@ void test_parse_get_values() {
   assert(parsed->tachometer_abs == 88);
   assert(parsed->fault_code == 7);
 
-  assert(!VescProtocol::parse_get_values({
-              static_cast<std::uint8_t>(VescPacketCommID::FwVersion),
+  assert(!ControllerProtocol::parse_get_values({
+              static_cast<std::uint8_t>(CommandId::FwVersion),
           })
               .has_value());
 
   auto truncated = make_values_payload();
   truncated.pop_back();
-  assert(!VescProtocol::parse_get_values(truncated).has_value());
+  assert(!ControllerProtocol::parse_get_values(truncated).has_value());
 }
 
 void test_parse_get_imu_data_full_mask() {
@@ -356,7 +356,7 @@ void test_parse_get_imu_data_full_mask() {
                                         {0.25f, 0.50f, 0.75f, 1.00f, 1.25f, 1.50f, 1.75f, 2.00f,
                                          2.25f, 2.50f, 2.75f, 3.00f, 0.10f, 0.20f, 0.30f, 0.40f});
 
-  const auto parsed = VescProtocol::parse_get_imu_data(payload);
+  const auto parsed = ControllerProtocol::parse_get_imu_data(payload);
   assert(parsed.has_value());
   expect_near(parsed->roll, 0.25f);
   expect_near(parsed->pitch, 0.50f);
@@ -380,7 +380,7 @@ void test_parse_get_imu_data_sparse_mask_and_rejections() {
   constexpr std::uint16_t kMask = (1U << 0U) | (1U << 4U) | (1U << 15U);
 
   const auto parsed =
-      VescProtocol::parse_get_imu_data(make_imu_payload(kMask, {1.0f, -2.0f, 0.5f}));
+      ControllerProtocol::parse_get_imu_data(make_imu_payload(kMask, {1.0f, -2.0f, 0.5f}));
   assert(parsed.has_value());
   expect_near(parsed->roll, 1.0f);
   expect_near(parsed->acc_y, -2.0f);
@@ -388,33 +388,33 @@ void test_parse_get_imu_data_sparse_mask_and_rejections() {
   expect_near(parsed->pitch, 0.0f);
   expect_near(parsed->quat_w, 1.0f);
 
-  assert(!VescProtocol::parse_get_imu_data({
-              static_cast<std::uint8_t>(VescPacketCommID::GetValues),
+  assert(!ControllerProtocol::parse_get_imu_data({
+              static_cast<std::uint8_t>(CommandId::GetValues),
               0x00,
               0x00,
           })
               .has_value());
 
-  assert(!VescProtocol::parse_get_imu_data({
-              static_cast<std::uint8_t>(VescPacketCommID::GetImuData),
+  assert(!ControllerProtocol::parse_get_imu_data({
+              static_cast<std::uint8_t>(CommandId::GetImuData),
               0x00,
           })
               .has_value());
 
-  assert(!VescProtocol::parse_get_imu_data(make_imu_payload(kMask, {1.0f, -2.0f})).has_value());
+  assert(!ControllerProtocol::parse_get_imu_data(make_imu_payload(kMask, {1.0f, -2.0f})).has_value());
 }
 
 void test_packet_parser_round_trip_and_resync() {
-  VescPacketParser parser;
+  PacketParser parser;
 
-  auto payloads = parser.feed_bytes(VescProtocol::build_get_imu_data_request());
+  auto payloads = parser.feed_bytes(ControllerProtocol::build_get_imu_data_request());
   assert(payloads.size() == 1);
   const std::vector<std::uint8_t> expected_imu_request{0x41, 0xFF, 0xFF};
   assert(payloads.front() == expected_imu_request);
 
-  auto invalid = VescProtocol::build_get_values_request();
+  auto invalid = ControllerProtocol::build_get_values_request();
   invalid[3] ^= 0x7F;
-  const auto valid = VescProtocol::build_fw_version_request();
+  const auto valid = ControllerProtocol::build_fw_version_request();
 
   assert(parser.feed_bytes(invalid).empty());
   payloads = parser.feed_bytes(valid);
@@ -424,7 +424,7 @@ void test_packet_parser_round_trip_and_resync() {
 }
 
 void test_packet_parser_short_frame_incremental_delivery() {
-  VescPacketParser parser;
+  PacketParser parser;
   const auto expected_payload = bytes({0x11, 0x22, 0x33});
   const auto framed = frame_payload(expected_payload);
 
@@ -438,13 +438,13 @@ void test_packet_parser_short_frame_incremental_delivery() {
 }
 
 void test_packet_parser_waits_for_outer_frame_with_nested_frame_bytes() {
-  const auto nested = VescProtocol::build_fw_version_request();
+  const auto nested = ControllerProtocol::build_fw_version_request();
   auto outer_payload = bytes({0x42});
   outer_payload.insert(outer_payload.end(), nested.begin(), nested.end());
   outer_payload.push_back(0x43);
   const auto outer = frame_payload(outer_payload);
 
-  const auto expect_outer = [&](VescPacketParser& parser) {
+  const auto expect_outer = [&](PacketParser& parser) {
     const std::vector<std::uint8_t> without_outer_trailer(outer.begin(), outer.end() - 3);
     assert(parser.feed_bytes(without_outer_trailer).empty());
 
@@ -454,10 +454,10 @@ void test_packet_parser_waits_for_outer_frame_with_nested_frame_bytes() {
     assert(payloads.front() == outer_payload);
   };
 
-  VescPacketParser fresh_parser;
+  PacketParser fresh_parser;
   expect_outer(fresh_parser);
 
-  VescPacketParser parser_after_error;
+  PacketParser parser_after_error;
   auto invalid = frame_payload(bytes({0xA0}));
   invalid[invalid.size() - 2] ^= 0x01;
   assert(parser_after_error.feed_bytes(invalid).empty());
@@ -465,7 +465,7 @@ void test_packet_parser_waits_for_outer_frame_with_nested_frame_bytes() {
 }
 
 void test_packet_parser_emits_multiple_frames_from_one_burst() {
-  VescPacketParser parser;
+  PacketParser parser;
   const auto first_payload = bytes({0x01});
   const auto second_payload = bytes({0x02, 0x03});
 
@@ -478,7 +478,7 @@ void test_packet_parser_emits_multiple_frames_from_one_burst() {
 }
 
 void test_packet_parser_resyncs_after_garbage_prefix() {
-  VescPacketParser parser;
+  PacketParser parser;
   const auto expected_payload = bytes({0x44, 0x55});
 
   const auto payloads = parser.feed_bytes(
@@ -489,7 +489,7 @@ void test_packet_parser_resyncs_after_garbage_prefix() {
 }
 
 void test_packet_parser_frame_boundaries() {
-  VescPacketParser parser;
+  PacketParser parser;
 
   const std::vector<std::uint8_t> short_payload(255, 0x11);
   auto payloads = parser.feed_bytes(frame_payload(short_payload));
@@ -512,7 +512,7 @@ void test_packet_parser_frame_boundaries() {
 }
 
 void test_packet_parser_resyncs_after_bad_crc() {
-  VescPacketParser parser;
+  PacketParser parser;
   auto invalid = frame_payload(bytes({0xA0, 0xA1}));
   invalid[invalid.size() - 2] ^= 0x01;
 
@@ -524,7 +524,7 @@ void test_packet_parser_resyncs_after_bad_crc() {
 }
 
 void test_packet_parser_resyncs_after_bad_stop_byte() {
-  VescPacketParser parser;
+  PacketParser parser;
   auto invalid = frame_payload(bytes({0xC0, 0xC1}));
   invalid.back() = 0x00;
 
@@ -536,19 +536,19 @@ void test_packet_parser_resyncs_after_bad_stop_byte() {
 }
 
 void test_packet_parser_resyncs_after_corrupt_length() {
-  VescPacketParser parser;
-  const auto valid = VescProtocol::build_fw_version_request();
+  PacketParser parser;
+  const auto valid = ControllerProtocol::build_fw_version_request();
   // Length bytes are not escaped, so a corrupt length can consume later frames
   // within one declared candidate. A following frame restores synchronization.
   const auto payloads =
       parser.feed_bytes(concat_bytes({bytes({0x02, 0x03, 0xAA}), valid, valid}));
 
   assert(payloads.size() == 1);
-  assert(payloads.front() == bytes({static_cast<std::uint8_t>(VescPacketCommID::FwVersion)}));
+  assert(payloads.front() == bytes({static_cast<std::uint8_t>(CommandId::FwVersion)}));
 }
 
 void test_packet_parser_reset_clears_partial_frame_state() {
-  VescPacketParser parser;
+  PacketParser parser;
   const auto expected_payload = bytes({0x21, 0x22});
   const auto framed = frame_payload(expected_payload);
 
@@ -567,7 +567,7 @@ void test_packet_parser_reset_clears_partial_frame_state() {
 }
 
 void test_packet_parser_rejects_invalid_medium_frame_lengths() {
-  VescPacketParser parser;
+  PacketParser parser;
   const auto expected_payload = bytes({0xE0});
   // Keep the recovery probe on the short-frame path so any decoded payload must
   // come from a clean resync after the invalid medium-length header.
@@ -602,7 +602,7 @@ void test_packet_parser_rejects_invalid_medium_frame_lengths() {
 }
 
 void test_packet_parser_resyncs_after_unsupported_24bit_sequences() {
-  VescPacketParser parser;
+  PacketParser parser;
   const auto expected_payload = bytes({0xF0});
   const auto valid_short_frame = frame_payload(expected_payload);
   assert(valid_short_frame.front() == 0x02);
@@ -625,9 +625,9 @@ void test_packet_parser_resyncs_after_unsupported_24bit_sequences() {
 }
 
 void test_packet_parser_rejects_invalid_frames() {
-  VescPacketParser parser;
+  PacketParser parser;
 
-  const auto valid = VescProtocol::build_fw_version_request();
+  const auto valid = ControllerProtocol::build_fw_version_request();
 
   std::vector<std::uint8_t> zero_length_then_valid{0x02, 0x00};
   zero_length_then_valid.insert(zero_length_then_valid.end(), valid.begin(), valid.end());
