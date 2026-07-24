@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -71,6 +72,32 @@ struct AppConfigImage {
 struct LispCodeImage {
   /** Source and embedded-import bytes without the flash header or flags. */
   std::vector<std::uint8_t> bytes;
+};
+
+/**
+ * @brief Inputs to the firmware's local FOC detection-and-apply operation.
+ *
+ * Zero current and ERPM overrides select the firmware defaults.
+ */
+struct FocCalibrationParameters {
+  /** Acceptable motor copper loss used to derive current limits, in (0, 99999] watts. */
+  float max_power_loss_w{0.0f};
+  /** Minimum input-current override in [-9999, 0] amperes; zero uses the default. */
+  float min_input_current_a{0.0f};
+  /** Maximum input-current override in [0, 9999] amperes; zero uses the default. */
+  float max_input_current_a{0.0f};
+  /** Open-loop electrical RPM override in [0, 999999]; zero uses the default. */
+  float openloop_erpm{0.0f};
+  /** Sensorless electrical RPM override in [0, 999999]; zero uses the default. */
+  float sensorless_erpm{0.0f};
+};
+
+/** @brief Result of a firmware FOC detection-and-apply operation. */
+struct FocCalibrationResult {
+  /** Transport, validation, or firmware acceptance result. */
+  VescOperationResult operation{VescOperationResult::NoReply};
+  /** Raw firmware result code when a well-formed reply was received. */
+  std::optional<std::int16_t> firmware_code;
 };
 
 /**

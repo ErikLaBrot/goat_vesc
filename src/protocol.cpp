@@ -55,6 +55,15 @@ template <typename T> std::optional<T> scaled_integer(float value, double scale)
   return static_cast<T>(scaled);
 }
 
+template <typename T> std::optional<T> scaled_integer_rounded(float value, double scale) {
+  const double scaled = std::round(static_cast<double>(value) * scale);
+  if (!std::isfinite(scaled) || scaled < static_cast<double>(std::numeric_limits<T>::lowest()) ||
+      scaled > static_cast<double>(std::numeric_limits<T>::max())) {
+    return std::nullopt;
+  }
+  return static_cast<T>(scaled);
+}
+
 template <typename Image>
 std::optional<Image> parse_config_image(const VescProtocol::Payload& payload,
                                         VescPacketCommID expected_id) {
@@ -213,6 +222,57 @@ VescProtocol::Payload VescProtocol::build_lisp_set_running_request(bool running)
       static_cast<std::uint8_t>(VescPacketCommID::LispSetRunning),
       static_cast<std::uint8_t>(running),
   });
+}
+
+VescProtocol::Payload
+VescProtocol::build_foc_calibration_request(const FocCalibrationParameters& parameters) {
+  constexpr float kMaxPowerLossW = 99999.0f;
+  constexpr float kMaxInputCurrentA = 9999.0f;
+  constexpr float kMaxErpm = 999999.0f;
+  if (!(parameters.max_power_loss_w > 0.0f) ||
+      parameters.max_power_loss_w > kMaxPowerLossW ||
+      parameters.min_input_current_a < -kMaxInputCurrentA ||
+      parameters.min_input_current_a > 0.0f ||
+      parameters.max_input_current_a < 0.0f ||
+      parameters.max_input_current_a > kMaxInputCurrentA ||
+      parameters.openloop_erpm < 0.0f || parameters.openloop_erpm > kMaxErpm ||
+      parameters.sensorless_erpm < 0.0f || parameters.sensorless_erpm > kMaxErpm) {
+    return {};
+  }
+
+  const auto max_loss =
+      scaled_integer_rounded<std::int32_t>(parameters.max_power_loss_w, 1000.0);
+  const auto min_current =
+      scaled_integer_rounded<std::int32_t>(parameters.min_input_current_a, 1000.0);
+  const auto max_current =
+      scaled_integer_rounded<std::int32_t>(parameters.max_input_current_a, 1000.0);
+  const auto openloop =
+      scaled_integer_rounded<std::int32_t>(parameters.openloop_erpm, 1000.0);
+  const auto sensorless =
+      scaled_integer_rounded<std::int32_t>(parameters.sensorless_erpm, 1000.0);
+  if (!max_loss || !min_current || !max_current || !openloop || !sensorless) {
+    return {};
+  }
+
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc), 0};
+  append_integral_be(payload, *max_loss);
+  append_integral_be(payload, *min_current);
+  append_integral_be(payload, *max_current);
+  append_integral_be(payload, *openloop);
+  append_integral_be(payload, *sensorless);
+  return frame(payload);
+}
+
+VescProtocol::Payload
+VescProtocol::build_app_disable_output_command(std::chrono::milliseconds duration) {
+  if (duration < std::chrono::milliseconds::zero() ||
+      duration.count() > std::numeric_limits<std::int32_t>::max()) {
+    return {};
+  }
+
+  Payload payload{static_cast<std::uint8_t>(VescPacketCommID::AppDisableOutput), 0};
+  append_integral_be(payload, static_cast<std::int32_t>(duration.count()));
+  return frame(payload);
 }
 
 VescProtocol::Payload VescProtocol::pack_lisp_code(const LispCodeImage& image) {
@@ -436,6 +496,15 @@ bool VescProtocol::parse_lisp_write_ack(const Payload& payload, std::uint32_t ex
 bool VescProtocol::parse_bool_ack(const Payload& payload, VescPacketCommID expected_id) {
   return payload.size() == 2 && payload[0] == static_cast<std::uint8_t>(expected_id) &&
          payload[1] == 1;
+}
+
+std::optional<std::int16_t>
+VescProtocol::parse_foc_calibration_reply(const Payload& payload) {
+  if (payload.size() != 3 ||
+      payload[0] != static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc)) {
+    return std::nullopt;
+  }
+  return read_i16(payload.data() + 1);
 }
 
 } // namespace goat_vesc

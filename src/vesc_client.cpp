@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 #include <fcntl.h>
 #include <glob.h>
@@ -692,6 +693,49 @@ VescOperationResult VescClient::set_lisp_running(bool running,
              : VescOperationResult::Rejected;
 }
 
+bool VescClient::set_app_output_disabled(std::chrono::milliseconds duration) {
+  return enqueue_command(VescProtocol::build_app_disable_output_command(duration), false);
+}
+
+FocCalibrationResult
+VescClient::run_foc_calibration(const FocCalibrationParameters& parameters,
+                                std::chrono::milliseconds timeout) {
+  const auto packet = VescProtocol::build_foc_calibration_request(parameters);
+  if (packet.empty()) {
+    return {VescOperationResult::InvalidData, std::nullopt};
+  }
+
+  const auto deadline = SteadyClock::now() + timeout;
+  std::unique_lock lock(management_mutex_, std::defer_lock);
+  if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
+    return {VescOperationResult::NoReply, std::nullopt};
+  }
+
+  constexpr auto kSuppressionMargin = std::chrono::seconds(5);
+  const auto max_duration =
+      std::chrono::milliseconds(std::numeric_limits<std::int32_t>::max());
+  const auto suppression_duration =
+      timeout > max_duration - kSuppressionMargin ? max_duration : timeout + kSuppressionMargin;
+  if (!set_app_output_disabled(suppression_duration)) {
+    return {VescOperationResult::NoReply, std::nullopt};
+  }
+
+  const auto reply =
+      request_payload(packet, VescPacketCommID::DetectApplyAllFoc, deadline, true);
+  if (running_.load()) {
+    (void)set_app_output_disabled(std::chrono::milliseconds::zero());
+  }
+  if (!reply) {
+    return {VescOperationResult::NoReply, std::nullopt};
+  }
+
+  const auto code = VescProtocol::parse_foc_calibration_reply(*reply);
+  if (!code) {
+    return {VescOperationResult::Rejected, std::nullopt};
+  }
+  return {*code < 0 ? VescOperationResult::Rejected : VescOperationResult::Success, code};
+}
+
 std::uint64_t VescClient::wall_time_ns() const {
   if (config_.wall_time_ns) {
     try {
@@ -949,12 +993,12 @@ bool VescClient::handle_request_timeout() {
   return stop_transport;
 }
 
-bool VescClient::enqueue_control_command(std::vector<std::uint8_t> packet) {
+bool VescClient::enqueue_command(std::vector<std::uint8_t> packet, bool refresh_watchdog) {
   std::lock_guard lock(scheduler_mutex_);
   if (!running_.load() || packet.size() < 3) {
     return false;
   }
-  if (control_watchdog_enabled()) {
+  if (refresh_watchdog && control_watchdog_enabled()) {
     control_watchdog_.deadline = SteadyClock::now() + config_.command_watchdog_timeout;
     control_watchdog_.armed = true;
   }
@@ -968,6 +1012,10 @@ bool VescClient::enqueue_control_command(std::vector<std::uint8_t> packet) {
   command_queue_.push_back(std::move(packet));
   wake_io_thread();
   return true;
+}
+
+bool VescClient::enqueue_control_command(std::vector<std::uint8_t> packet) {
+  return enqueue_command(std::move(packet), true);
 }
 
 bool VescClient::control_watchdog_enabled() const {

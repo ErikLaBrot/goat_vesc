@@ -143,6 +143,23 @@ void test_build_management_requests_exact_bytes() {
   assert(VescProtocol::build_lisp_set_running_request(true) ==
          frame_payload({static_cast<std::uint8_t>(VescPacketCommID::LispSetRunning), 1}));
 
+  FocCalibrationParameters calibration{50.0f, -12.5f, 30.0f, 1200.0f, 3500.0f};
+  std::vector<std::uint8_t> calibrate{
+      static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc), 0};
+  append_i32(calibrate, 50000);
+  append_i32(calibrate, -12500);
+  append_i32(calibrate, 30000);
+  append_i32(calibrate, 1200000);
+  append_i32(calibrate, 3500000);
+  assert(VescProtocol::build_foc_calibration_request(calibration) ==
+         frame_payload(calibrate));
+
+  std::vector<std::uint8_t> disable{
+      static_cast<std::uint8_t>(VescPacketCommID::AppDisableOutput), 0};
+  append_i32(disable, 185000);
+  assert(VescProtocol::build_app_disable_output_command(std::chrono::milliseconds(185000)) ==
+         frame_payload(disable));
+
   const LispCodeImage code{{'(', ')', '\0'}};
   std::vector<std::uint8_t> crc_input{0, 0, '(', ')', '\0'};
   std::vector<std::uint8_t> packed;
@@ -173,6 +190,22 @@ void test_management_protocol_validation() {
   assert(VescProtocol::build_set_app_config_request(
              AppConfigImage{{1, 2, 3, 4}}, static_cast<AppConfigStorage>(99))
              .empty());
+  assert(VescProtocol::build_foc_calibration_request({}).empty());
+  assert(VescProtocol::build_foc_calibration_request({50.0f, 1.0f}).empty());
+  assert(VescProtocol::build_foc_calibration_request({50.0f, 0.0f, -1.0f}).empty());
+  assert(VescProtocol::build_foc_calibration_request({100000.0f}).empty());
+  assert(VescProtocol::build_foc_calibration_request({50.0f, -10000.0f}).empty());
+  assert(VescProtocol::build_foc_calibration_request({50.0f, 0.0f, 10000.0f}).empty());
+  assert(
+      VescProtocol::build_foc_calibration_request({50.0f, 0.0f, 0.0f, 1000000.0f})
+          .empty());
+  assert(VescProtocol::build_foc_calibration_request(
+             {50.0f, 0.0f, 0.0f, 0.0f, 1000000.0f})
+             .empty());
+  assert(VescProtocol::build_foc_calibration_request(
+             {50.0f, 0.0f, 0.0f, std::numeric_limits<float>::quiet_NaN(), 0.0f})
+             .empty());
+  assert(VescProtocol::build_app_disable_output_command(std::chrono::milliseconds(-1)).empty());
 
   const auto motor =
       VescProtocol::parse_motor_config({static_cast<std::uint8_t>(
@@ -221,6 +254,16 @@ void test_management_protocol_validation() {
   assert(!VescProtocol::parse_bool_ack(
       {static_cast<std::uint8_t>(VescPacketCommID::LispEraseCode)},
       VescPacketCommID::LispEraseCode));
+
+  const auto foc_ok = VescProtocol::parse_foc_calibration_reply(
+      {static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc), 0, 2});
+  assert(foc_ok && *foc_ok == 2);
+  const auto foc_failed = VescProtocol::parse_foc_calibration_reply(
+      {static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc), 0xFF, 0xF6});
+  assert(foc_failed && *foc_failed == -10);
+  assert(!VescProtocol::parse_foc_calibration_reply(
+              {static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc), 0})
+              .has_value());
 
   MotorConfigImage long_config{std::vector<std::uint8_t>(300, 0x55)};
   const auto framed = VescProtocol::build_set_motor_config_request(long_config);

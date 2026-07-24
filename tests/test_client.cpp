@@ -521,12 +521,18 @@ struct FakeVesc {
   std::atomic<int> lisp_erases{0};
   std::atomic<int> lisp_writes{0};
   std::atomic<int> lisp_run_commands{0};
+  std::atomic<int> foc_requests{0};
+  std::atomic<int> app_disable_commands{0};
   std::atomic<std::int32_t> last_current_raw{0};
   std::atomic<std::int32_t> last_duty_raw{0};
   std::atomic<std::int32_t> last_brake_current_raw{0};
   std::atomic<std::int16_t> last_servo_raw{0};
   std::atomic<bool> respond_to_management{true};
   std::atomic<bool> reject_lisp_write{false};
+  std::atomic<bool> malformed_foc_reply{false};
+  std::atomic<bool> send_unsolicited_foc_configs{true};
+  std::atomic<std::int16_t> foc_result{0};
+  std::atomic<int> foc_response_delay_ms{0};
 
   std::vector<std::uint8_t> management_history() const {
     std::lock_guard lock(management_history_mutex_);
@@ -536,6 +542,11 @@ struct FakeVesc {
   void clear_management_history() {
     std::lock_guard lock(management_history_mutex_);
     management_history_.clear();
+  }
+
+  std::vector<std::int32_t> app_disable_durations() const {
+    std::lock_guard lock(app_disable_mutex_);
+    return app_disable_durations_;
   }
 
 private:
@@ -680,6 +691,39 @@ private:
               if (respond_to_management.load() && payload->size() == 2) {
                 write_all(server_fd_.get(), make_bool_ack(VescPacketCommID::LispSetRunning, true));
               }
+            } else if (id ==
+                           static_cast<std::uint8_t>(VescPacketCommID::AppDisableOutput) &&
+                       payload->size() == 6) {
+              record_management(id);
+              ++app_disable_commands;
+              std::lock_guard lock(app_disable_mutex_);
+              app_disable_durations_.push_back(read_i32(*payload, 2));
+            } else if (id ==
+                           static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc) &&
+                       payload->size() == 22) {
+              record_management(id);
+              ++foc_requests;
+              if (!respond_to_management.load()) {
+                continue;
+              }
+              if (send_unsolicited_foc_configs.load()) {
+                write_all(server_fd_.get(),
+                          make_config_response(VescPacketCommID::GetMotorConfig, motor_config_));
+                write_all(server_fd_.get(),
+                          make_config_response(VescPacketCommID::GetAppConfig, app_config_));
+              }
+              std::vector<std::uint8_t> reply{id};
+              append_i16(reply, foc_result.load());
+              if (malformed_foc_reply.load()) {
+                reply.pop_back();
+              }
+              const auto framed = frame_payload(reply);
+              const auto delay = std::chrono::milliseconds(foc_response_delay_ms.load());
+              if (delay > std::chrono::milliseconds::zero()) {
+                schedule_response(delay, framed);
+              } else {
+                write_all(server_fd_.get(), framed);
+              }
             } else if (id == static_cast<std::uint8_t>(VescPacketCommID::SetRpm) &&
                        payload->size() == 5) {
               ++rpm_commands;
@@ -729,6 +773,8 @@ private:
   std::vector<std::uint8_t> packed_lisp_;
   mutable std::mutex management_history_mutex_;
   std::vector<std::uint8_t> management_history_;
+  mutable std::mutex app_disable_mutex_;
+  std::vector<std::int32_t> app_disable_durations_;
   std::mutex response_threads_mutex_;
   std::vector<std::thread> response_threads_;
   std::thread worker_;
@@ -1567,6 +1613,109 @@ void test_lisp_management() {
   client.disconnect();
 }
 
+void test_foc_calibration_and_polling() {
+  FakeVesc fake;
+  auto config = config_for(fake);
+  config.imu_poll_interval = 15ms;
+  config.motor_poll_interval = 0ms;
+
+  VescClient client(config);
+  assert(client.connect());
+  wait_until([&] { return fake.imu_requests.load() >= 2; }, 500ms,
+             "polling did not start before FOC calibration");
+
+  const FocCalibrationParameters parameters{50.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+  const auto success = client.run_foc_calibration(parameters, 500ms);
+  assert(success.operation == VescOperationResult::Success);
+  assert(success.firmware_code == 0);
+  wait_until([&] { return fake.app_disable_commands.load() == 2; }, 500ms,
+             "FOC calibration did not reenable application output");
+  assert(fake.app_disable_durations() == std::vector<std::int32_t>({5500, 0}));
+
+  const auto requests_before_invalid = fake.foc_requests.load();
+  auto invalid = parameters;
+  invalid.max_power_loss_w = std::numeric_limits<float>::quiet_NaN();
+  const auto invalid_result = client.run_foc_calibration(invalid, 500ms);
+  assert(invalid_result.operation == VescOperationResult::InvalidData);
+  assert(!invalid_result.firmware_code);
+  assert(fake.foc_requests.load() == requests_before_invalid);
+
+  fake.foc_result.store(-10);
+  const auto rejected = client.run_foc_calibration(parameters, 500ms);
+  assert(rejected.operation == VescOperationResult::Rejected);
+  assert(rejected.firmware_code == -10);
+
+  fake.malformed_foc_reply.store(true);
+  const auto malformed = client.run_foc_calibration(parameters, 500ms);
+  assert(malformed.operation == VescOperationResult::Rejected);
+  assert(!malformed.firmware_code);
+
+  const auto polls_before = fake.imu_requests.load();
+  wait_until([&] { return fake.imu_requests.load() > polls_before; }, 500ms,
+             "polling did not resume after FOC calibration");
+  client.disconnect();
+}
+
+void test_foc_calibration_serializes_with_management_operations() {
+  FakeVesc fake;
+  auto config = config_for(fake);
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+
+  VescClient client(config);
+  assert(client.connect());
+  const auto app = client.request_app_config(500ms);
+  assert(app);
+
+  fake.clear_management_history();
+  fake.foc_response_delay_ms.store(40);
+  auto calibration = std::async(std::launch::async, [&] {
+    return client.run_foc_calibration({50.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 500ms);
+  });
+  wait_until([&] { return fake.foc_requests.load() == 1; }, 250ms,
+             "FOC calibration request was not sent");
+
+  auto updated_app = *app;
+  updated_app.bytes.back() = 0x77;
+  auto app_write = std::async(std::launch::async, [&] {
+    return client.write_app_config(updated_app, AppConfigStorage::Persistent, 500ms);
+  });
+
+  assert(calibration.get().operation == VescOperationResult::Success);
+  assert(app_write.get() == VescOperationResult::Success);
+  wait_until([&] { return fake.app_disable_commands.load() == 2; }, 250ms,
+             "application output reenable was not sent");
+  assert(fake.management_history() ==
+         std::vector<std::uint8_t>({
+             static_cast<std::uint8_t>(VescPacketCommID::AppDisableOutput),
+             static_cast<std::uint8_t>(VescPacketCommID::DetectApplyAllFoc),
+             static_cast<std::uint8_t>(VescPacketCommID::AppDisableOutput),
+             static_cast<std::uint8_t>(VescPacketCommID::GetAppConfig),
+             static_cast<std::uint8_t>(VescPacketCommID::SetAppConfig),
+         }));
+  client.disconnect();
+}
+
+void test_foc_calibration_timeout_stops_connection() {
+  FakeVesc fake;
+  auto config = config_for(fake);
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+
+  VescClient client(config);
+  assert(client.connect());
+  fake.respond_to_management.store(false);
+  const auto result =
+      client.run_foc_calibration({50.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 30ms);
+  assert(result.operation == VescOperationResult::NoReply);
+  assert(!result.firmware_code);
+  wait_until([&] { return !client.is_connected(); }, 250ms,
+             "FOC timeout did not stop the connection");
+  assert(fake.foc_requests.load() == 1);
+  assert(fake.app_disable_commands.load() == 1);
+  client.disconnect();
+}
+
 void test_management_timeout_stops_connection() {
   FakeVesc fake;
   auto config = config_for(fake);
@@ -1914,6 +2063,9 @@ int main() {
   test_configuration_management_and_polling();
   test_management_operations_are_serialized();
   test_lisp_management();
+  test_foc_calibration_and_polling();
+  test_foc_calibration_serializes_with_management_operations();
+  test_foc_calibration_timeout_stops_connection();
   test_management_timeout_stops_connection();
   test_queued_query_deadline_expires_while_older_query_waits();
   test_fw_query_recovers_after_timeout_and_late_reply();

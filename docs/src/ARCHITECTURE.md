@@ -55,6 +55,21 @@ current zero flags, erase existing code, then validate every chunk
 acknowledgement and offset. Upload does not start LispBM; execution changes use
 the separate explicit operation.
 
+## FOC Calibration
+
+`run_foc_calibration(...)` is a firmware-7.00 transport primitive, not an
+operator wizard. It holds the management mutex, queues bounded application
+output suppression, and sends `COMM_DETECT_APPLY_ALL_FOC` with CAN detection
+disabled. The firmware performs the blocking measurement and persists the
+resulting motor configuration. Its packet contract is pinned to
+[`vedderb/bldc` `9ff7e2e`](https://github.com/vedderb/bldc/blob/9ff7e2ef1d3a507e588eeca3fa05516d642f0e35/comm/commands.c).
+
+The firmware can emit unsolicited motor and application configuration payloads
+before the final signed result. The scheduler ignores those payloads while
+waiting for the calibration reply ID. A well-formed negative result is returned
+to the caller; a timeout stops the connection. When still connected, the client
+queues an explicit zero-duration command to reenable application output.
+
 ## Protocol Layering
 
 The wire-format code is split into two public pieces:

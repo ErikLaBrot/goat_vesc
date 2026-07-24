@@ -321,6 +321,23 @@ public:
    */
   VescOperationResult set_lisp_running(bool running, std::chrono::milliseconds timeout);
 
+  /**
+   * @brief Queues firmware application-output suppression without waiting for a reply.
+   *
+   * A zero duration reenables output. `true` only means the packet remains
+   * deliverable because this firmware command has no acknowledgement.
+   */
+  bool set_app_output_disabled(std::chrono::milliseconds duration);
+
+  /**
+   * @brief Runs firmware-7.00 local FOC detection and persists the detected motor config.
+   *
+   * Application output is suppressed for the operation and explicitly reenabled
+   * afterward when the connection remains usable. The operation never scans CAN.
+   */
+  FocCalibrationResult run_foc_calibration(const FocCalibrationParameters& parameters,
+                                           std::chrono::milliseconds timeout);
+
 private:
   using Payload = VescPacketParser::Payload;
   using SteadyClock = std::chrono::steady_clock;
@@ -406,6 +423,7 @@ private:
   VescOperationResult erase_lisp_code_until(std::uint32_t size,
                                             SteadyClock::time_point deadline);
 
+  bool enqueue_command(std::vector<std::uint8_t> packet, bool refresh_watchdog);
   bool enqueue_control_command(std::vector<std::uint8_t> packet);
   bool control_watchdog_enabled() const;
   std::optional<std::vector<std::uint8_t>>

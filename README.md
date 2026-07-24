@@ -14,6 +14,7 @@ This library is intended for higher-level GOAT applications that need:
 - typed helpers for the bridge-facing VESC message set
 - cached telemetry reads plus callback-based delivery of fresh samples
 - firmware-native motor, application, and LispBM backup/restore primitives
+- guarded firmware-7.00 local FOC calibration transport
 
 The library does not include a ROS interface. `goat_vesc_ros` is the ROS-facing
 adapter layer that consumes this installed package.

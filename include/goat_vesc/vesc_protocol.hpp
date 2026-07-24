@@ -62,6 +62,10 @@ public:
   static Payload build_lisp_write_request(const Payload& chunk, std::uint32_t offset);
   /** @brief Builds a request to start or stop LispBM execution. */
   static Payload build_lisp_set_running_request(bool running);
+  /** @brief Builds the firmware-7.00 local FOC detection-and-apply request. */
+  static Payload build_foc_calibration_request(const FocCalibrationParameters& parameters);
+  /** @brief Builds a fire-and-forget application-output suppression command. */
+  static Payload build_app_disable_output_command(std::chrono::milliseconds duration);
   /** @brief Adds the firmware storage header, CRC, and zero flags to LispBM code. */
   static Payload pack_lisp_code(const LispCodeImage& image);
   /**
@@ -133,6 +137,8 @@ public:
   static bool parse_lisp_write_ack(const Payload& payload, std::uint32_t expected_offset);
   /** @brief Validates an accepted ID-plus-boolean acknowledgement. */
   static bool parse_bool_ack(const Payload& payload, VescPacketCommID expected_id);
+  /** @brief Parses the signed firmware result from a FOC calibration reply. */
+  static std::optional<std::int16_t> parse_foc_calibration_reply(const Payload& payload);
 
 private:
   // Wraps a payload in the VESC framing: [start | len... | payload | crc | stop]

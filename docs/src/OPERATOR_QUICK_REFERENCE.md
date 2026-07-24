@@ -95,11 +95,18 @@ Runtime adjustment and diagnostic entry points include:
   `write_lisp_code(...)` manage stored LispBM source/import bytes.
 - `set_lisp_running(...)` explicitly starts or stops LispBM. Upload leaves it
   stopped.
+- `set_app_output_disabled(...)` queues bounded firmware application-output
+  suppression. The command has no acknowledgement.
+- `run_foc_calibration(...)` performs direct-controller firmware-7.00 FOC
+  detection and returns the raw firmware result code.
 
 Motor and app writes compare the image's embedded schema signature with the
 active controller before sending. A management timeout stops the connection;
 reconnect and reread state before retrying. Persistent writes change controller
 flash and require the same hardware authorization as other real-device changes.
+FOC calibration also persists motor configuration and moves the motor. It
+requires separate actuator authorization and an unloaded, secured motor; it
+never scans CAN.
 
 ## `VescConfig` Options
 

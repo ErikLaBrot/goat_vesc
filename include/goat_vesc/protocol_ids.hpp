@@ -62,6 +62,10 @@ enum class VescPacketCommID : std::uint8_t {
   SetAppConfig = 16,
   /** Read the active application configuration. */
   GetAppConfig = 17,
+  /** Detect and persist all local FOC motor parameters. */
+  DetectApplyAllFoc = 58,
+  /** Temporarily suppress application-generated motor output. */
+  AppDisableOutput = 63,
   /** IMU telemetry request/reply. */
   GetImuData = 65,
   /** Read a chunk of stored LispBM code. */

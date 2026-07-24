@@ -14,8 +14,8 @@ reusable CMake package for higher-level GOAT applications.
 This repository does not own:
 
 - the ROS adapter or application-level control policy
-- VESC firmware, FOC calibration, or schema-level interpretation of controller
-  configurations
+- VESC firmware, operator calibration policy, or schema-level interpretation
+  of controller configurations
 - selection or coordination of multiple processes competing for one controller
 
 Start with the [project README](../../README.md) for the supported public
@@ -31,8 +31,8 @@ link against that firmware.
 The target controller hardware is constrained to this firmware lineage, so the
 upstream source is authoritative for command IDs, payload layouts, scaling, and
 configuration serialization. Verify new protocol support against the exact
-firmware version deployed on the controller; this repository does not currently
-pin one.
+firmware version deployed on the controller. Feature-specific documentation
+names a pinned upstream revision where the implementation requires one.
 
 ## Layers And Responsibilities
 
@@ -52,6 +52,7 @@ pin one.
 | Control command | A public method validates and encodes a packet, then replaces any older queued command with the same command ID. The I/O thread writes at most one command per scheduler pass without tracking a reply. Accepted commands refresh the optional watchdog. |
 | One-shot query | Each request carries an absolute deadline from submission; the request queue holds the packet, expected reply ID, and completion callbacks. Only one reply-bearing request is in flight. A matching reply completes it, while queued or in-flight requests can expire. Firmware version is stable during a connection, so its diagnostic query may recover after a late reply. |
 | Configuration or LispBM management | A management mutex keeps multi-step operations atomic across callers. Motor and app writes first compare the firmware-generated signature with the active image. LispBM transfers use acknowledged bounded chunks. A sent management request that times out stops the connection so a late reply cannot complete newer stateful work. |
+| Local FOC calibration | The same management mutex covers application-output suppression and `COMM_DETECT_APPLY_ALL_FOC`. The library always targets the directly connected controller, returns the raw firmware result, and disconnects on timeout. Physical setup and motion authorization remain the consuming application's responsibility. |
 | Periodic telemetry | IMU and motor-state poll channels become due independently. The scheduler sends a poll when no reply-bearing request is in flight, then the I/O thread decodes and timestamps the reply, updates the latest-value cache, and publishes callbacks outside internal locks. IMU wins a tie between due channels. |
 
 All transport traffic converges on the same I/O thread and packet parser.
@@ -70,6 +71,9 @@ watchdog, cache, and callback model.
 - Motor and app images are opaque, firmware-specific serialized data. Do not
   infer fields or write an image whose embedded signature differs from the
   active controller image.
+- FOC calibration moves the motor and persists firmware-derived configuration.
+  Never invoke it without explicit hardware authorization and an unloaded,
+  secured motor.
 - Control commands take priority over periodic polls and diagnostic queries.
 - User callbacks run on the I/O thread outside cache and registry locks.
   They must remain short and must not destroy the client. Exceptions are
