@@ -368,7 +368,12 @@ std::optional<MotorState> ControllerProtocol::parse_get_values(const Payload& pa
   //   +44 ..+47 : tachometer        int32
   //   +48 ..+51 : tachometer_abs    int32
   //   +52       : fault_code        uint8
+  // Firmware 7.00 optionally continues with PID position (4), controller ID
+  // (1), three MOSFET temperatures (6), Vd (4), Vq (4), and status (1).
+  // Status bit 0 is the command timeout and bit 1 is the kill-switch latch.
   constexpr std::size_t kMinLen = 1 + 53; // comm_id + 53 data bytes
+  constexpr std::size_t kStatusOffset = 72;
+  constexpr std::size_t kStatusLen = 1 + kStatusOffset + 1;
   if (payload.size() < kMinLen) {
     return std::nullopt;
   }
@@ -391,6 +396,10 @@ std::optional<MotorState> ControllerProtocol::parse_get_values(const Payload& pa
   s.tachometer = read_i32(p + 44);
   s.tachometer_abs = read_i32(p + 48);
   s.fault_code = p[52];
+  if (payload.size() >= kStatusLen) {
+    s.has_timeout = (p[kStatusOffset] & 0x01U) != 0U;
+    s.kill_switch_active = (p[kStatusOffset] & 0x02U) != 0U;
+  }
 
   return s;
 }

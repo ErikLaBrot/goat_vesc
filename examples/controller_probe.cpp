@@ -77,7 +77,9 @@ void print_motor_state(const std::optional<MotorState>& state) {
             << '\n'
             << "  vin: " << state->vin << '\n'
             << "  temp_motor/temp_fet: " << state->temp_motor << ", " << state->temp_fet << '\n'
-            << "  fault_code: " << static_cast<int>(state->fault_code) << '\n';
+            << "  fault_code: " << static_cast<int>(state->fault_code) << '\n'
+            << "  command_timeout: " << state->has_timeout << '\n'
+            << "  kill_switch_active: " << state->kill_switch_active << '\n';
 }
 
 } // namespace

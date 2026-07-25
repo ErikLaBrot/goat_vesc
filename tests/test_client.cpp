@@ -11,6 +11,7 @@
 #include <cassert>
 #include <cerrno>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdlib>
 #include <future>
@@ -2041,6 +2042,7 @@ void test_destruction_after_async_transport_failure_is_safe() {
 } // namespace
 
 int main() {
+  std::signal(SIGPIPE, SIG_IGN);
   test_client_polling_and_subscriptions();
   test_callback_failures_and_reentrant_shutdown_are_contained();
   test_subscription_cleanup_after_disconnect();

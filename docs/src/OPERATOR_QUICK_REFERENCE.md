@@ -43,6 +43,8 @@ callback already copied for dispatch may run once after its subscription resets.
 - `tachometer`
 - `tachometer_abs`
 - `fault_code`
+- `has_timeout`
+- `kill_switch_active`
 
 For power-oriented monitoring, the most useful fields are usually:
 

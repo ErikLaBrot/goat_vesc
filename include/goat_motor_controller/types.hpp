@@ -190,6 +190,10 @@ struct MotorState {
   std::int32_t tachometer_abs{0};
   /** Raw firmware fault code byte. */
   std::uint8_t fault_code{0};
+  /** True when the firmware command timeout is active. */
+  bool has_timeout{false};
+  /** True when the firmware kill-switch latch is active. */
+  bool kill_switch_active{false};
 };
 
 /**

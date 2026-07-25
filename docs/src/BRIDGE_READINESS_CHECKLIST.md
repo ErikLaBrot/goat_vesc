@@ -113,5 +113,6 @@ bridge-v1 requirements and their public behavior. It does not require literal
 ## Out Of Scope For This Draft
 
 - Full-library requirements beyond bridge v1
-- Additional `GetValues` fields beyond the agreed bridge-v1 telemetry set
+- Additional `GetValues` fields beyond the agreed bridge-v1 telemetry set,
+  except the firmware timeout and kill-latch status used by fabrication safety
 - Deep runtime diagnostics beyond config introspection

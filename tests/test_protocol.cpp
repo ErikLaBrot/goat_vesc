@@ -80,6 +80,19 @@ std::vector<std::uint8_t> make_values_payload() {
   return payload;
 }
 
+std::vector<std::uint8_t> make_full_values_payload(std::uint8_t status) {
+  auto payload = make_values_payload();
+  append_i32(payload, 123456);
+  payload.push_back(32);
+  append_i16(payload, 301);
+  append_i16(payload, 302);
+  append_i16(payload, 303);
+  append_i32(payload, 4000);
+  append_i32(payload, -5000);
+  payload.push_back(status);
+  return payload;
+}
+
 std::vector<std::uint8_t> make_imu_payload(std::uint16_t mask,
                                            std::initializer_list<float> values) {
 
@@ -340,6 +353,19 @@ void test_parse_get_values() {
   assert(parsed->tachometer == -77);
   assert(parsed->tachometer_abs == 88);
   assert(parsed->fault_code == 7);
+  assert(!parsed->has_timeout);
+  assert(!parsed->kill_switch_active);
+
+  const auto full = ControllerProtocol::parse_get_values(make_full_values_payload(0x03));
+  assert(full.has_value());
+  assert(full->has_timeout);
+  assert(full->kill_switch_active);
+
+  const auto kill_only =
+      ControllerProtocol::parse_get_values(make_full_values_payload(0x02));
+  assert(kill_only.has_value());
+  assert(!kill_only->has_timeout);
+  assert(kill_only->kill_switch_active);
 
   assert(!ControllerProtocol::parse_get_values({
               static_cast<std::uint8_t>(CommandId::FwVersion),
