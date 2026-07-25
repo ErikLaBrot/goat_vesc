@@ -114,7 +114,7 @@ public:
   ControllerClient& operator=(const ControllerClient&) = delete;
 
   /**
-   * @brief Returns currently visible `/dev/ttyACM*` candidates.
+   * @brief Returns currently visible USB serial candidates.
    * @return Candidate device paths discovered through globbing.
    */
   static std::vector<std::string> find_devices();
