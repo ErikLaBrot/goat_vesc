@@ -1641,8 +1641,23 @@ void test_custom_app_data() {
   assert(!client.request_custom_app_data({}, 500ms));
 
   fake.respond_to_management.store(false);
-  assert(!client.request_custom_app_data({4}, 40ms));
-  wait_until([&] { return !client.is_connected(); }, 250ms,
+  auto pending = std::async(std::launch::async, [&] {
+    return client.request_custom_app_data({4}, 2s);
+  });
+  wait_until([&] { return fake.custom_app_requests.load() == 3; }, 250ms,
+             "custom app request was not sent");
+  client.disconnect();
+  assert(!pending.get());
+
+  FakeVesc timeout_fake;
+  auto timeout_config = config_for(timeout_fake);
+  timeout_config.imu_poll_interval = 0ms;
+  timeout_config.motor_poll_interval = 0ms;
+  ControllerClient timeout_client(timeout_config);
+  assert(timeout_client.connect());
+  timeout_fake.respond_to_management.store(false);
+  assert(!timeout_client.request_custom_app_data({5}, 40ms));
+  wait_until([&] { return !timeout_client.is_connected(); }, 250ms,
              "custom app timeout did not stop connection");
 }
 
