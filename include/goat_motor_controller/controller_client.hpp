@@ -322,6 +322,16 @@ public:
   OperationResult set_lisp_running(bool running, std::chrono::milliseconds timeout);
 
   /**
+   * @brief Exchanges one bounded payload with the running custom application.
+   *
+   * A timeout stops the connection because the application may have acted on
+   * the request even when its reply was lost.
+   */
+  std::optional<std::vector<std::uint8_t>>
+  request_custom_app_data(const std::vector<std::uint8_t>& data,
+                          std::chrono::milliseconds timeout);
+
+  /**
    * @brief Queues firmware application-output suppression without waiting for a reply.
    *
    * A zero duration reenables output. `true` only means the packet remains

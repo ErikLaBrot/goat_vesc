@@ -155,6 +155,9 @@ void test_build_management_requests_exact_bytes() {
 
   assert(ControllerProtocol::build_lisp_set_running_request(true) ==
          frame_payload({static_cast<std::uint8_t>(CommandId::LispSetRunning), 1}));
+  assert(ControllerProtocol::build_custom_app_data_request({0x10, 0x20}) ==
+         frame_payload({static_cast<std::uint8_t>(CommandId::CustomAppData),
+                        0x10, 0x20}));
 
   FocCalibrationParameters calibration{50.0f, -12.5f, 30.0f, 1200.0f, 3500.0f};
   std::vector<std::uint8_t> calibrate{
@@ -195,6 +198,10 @@ void test_management_protocol_validation() {
   assert(ControllerProtocol::build_lisp_write_request({}, 0).empty());
   assert(ControllerProtocol::build_lisp_write_request(
              std::vector<std::uint8_t>(kMaxPayloadBytes - 4, 0), 0)
+             .empty());
+  assert(ControllerProtocol::build_custom_app_data_request({}).empty());
+  assert(ControllerProtocol::build_custom_app_data_request(
+             std::vector<std::uint8_t>(kMaxPayloadBytes, 0))
              .empty());
   assert(ControllerProtocol::pack_lisp_code(LispCodeImage{}).empty());
   assert(ControllerProtocol::pack_lisp_code(
@@ -267,6 +274,15 @@ void test_management_protocol_validation() {
   assert(!ControllerProtocol::parse_bool_ack(
       {static_cast<std::uint8_t>(CommandId::LispEraseCode)},
       CommandId::LispEraseCode));
+  assert(ControllerProtocol::parse_custom_app_data_reply(
+             {static_cast<std::uint8_t>(CommandId::CustomAppData), 0xAA, 0xBB}) ==
+         ControllerProtocol::Payload({0xAA, 0xBB}));
+  assert(ControllerProtocol::parse_custom_app_data_reply(
+             {static_cast<std::uint8_t>(CommandId::CustomAppData)}) ==
+         ControllerProtocol::Payload{});
+  assert(!ControllerProtocol::parse_custom_app_data_reply({}));
+  assert(!ControllerProtocol::parse_custom_app_data_reply(
+      {static_cast<std::uint8_t>(CommandId::FwVersion), 0xAA}));
 
   const auto foc_ok = ControllerProtocol::parse_foc_calibration_reply(
       {static_cast<std::uint8_t>(CommandId::DetectApplyAllFoc), 0, 2});

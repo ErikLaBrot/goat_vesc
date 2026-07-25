@@ -225,6 +225,16 @@ ControllerProtocol::Payload ControllerProtocol::build_lisp_set_running_request(b
 }
 
 ControllerProtocol::Payload
+ControllerProtocol::build_custom_app_data_request(const Payload& data) {
+  if (data.empty() || data.size() >= kMaxPayloadBytes) {
+    return {};
+  }
+  Payload payload{static_cast<std::uint8_t>(CommandId::CustomAppData)};
+  payload.insert(payload.end(), data.begin(), data.end());
+  return frame(payload);
+}
+
+ControllerProtocol::Payload
 ControllerProtocol::build_foc_calibration_request(const FocCalibrationParameters& parameters) {
   constexpr float kMaxPowerLossW = 99999.0f;
   constexpr float kMaxInputCurrentA = 9999.0f;
@@ -505,6 +515,15 @@ bool ControllerProtocol::parse_lisp_write_ack(const Payload& payload, std::uint3
 bool ControllerProtocol::parse_bool_ack(const Payload& payload, CommandId expected_id) {
   return payload.size() == 2 && payload[0] == static_cast<std::uint8_t>(expected_id) &&
          payload[1] == 1;
+}
+
+std::optional<ControllerProtocol::Payload>
+ControllerProtocol::parse_custom_app_data_reply(const Payload& payload) {
+  if (payload.empty() || payload.size() > kMaxPayloadBytes ||
+      payload[0] != static_cast<std::uint8_t>(CommandId::CustomAppData)) {
+    return std::nullopt;
+  }
+  return Payload(payload.begin() + 1, payload.end());
 }
 
 std::optional<std::int16_t>

@@ -678,7 +678,7 @@ OperationResult ControllerClient::write_lisp_code(const LispCodeImage& image,
 }
 
 OperationResult ControllerClient::set_lisp_running(bool running,
-                                                 std::chrono::milliseconds timeout) {
+                                                    std::chrono::milliseconds timeout) {
   const auto deadline = SteadyClock::now() + timeout;
   std::unique_lock lock(management_mutex_, std::defer_lock);
   if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
@@ -692,8 +692,20 @@ OperationResult ControllerClient::set_lisp_running(bool running,
     return OperationResult::NoReply;
   }
   return ControllerProtocol::parse_bool_ack(*reply, CommandId::LispSetRunning)
-             ? OperationResult::Success
-             : OperationResult::Rejected;
+      ? OperationResult::Success
+      : OperationResult::Rejected;
+}
+
+std::optional<std::vector<std::uint8_t>>
+ControllerClient::request_custom_app_data(const std::vector<std::uint8_t>& data,
+                                          std::chrono::milliseconds timeout) {
+  if (timeout <= std::chrono::milliseconds::zero()) {
+    return std::nullopt;
+  }
+  const auto reply =
+      request_payload(ControllerProtocol::build_custom_app_data_request(data),
+                      CommandId::CustomAppData, SteadyClock::now() + timeout, true);
+  return reply ? ControllerProtocol::parse_custom_app_data_reply(*reply) : std::nullopt;
 }
 
 bool ControllerClient::set_app_output_disabled(std::chrono::milliseconds duration) {

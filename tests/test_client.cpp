@@ -522,6 +522,7 @@ struct FakeVesc {
   std::atomic<int> lisp_erases{0};
   std::atomic<int> lisp_writes{0};
   std::atomic<int> lisp_run_commands{0};
+  std::atomic<int> custom_app_requests{0};
   std::atomic<int> foc_requests{0};
   std::atomic<int> app_disable_commands{0};
   std::atomic<std::int32_t> last_current_raw{0};
@@ -691,6 +692,12 @@ private:
               ++lisp_run_commands;
               if (respond_to_management.load() && payload->size() == 2) {
                 write_all(server_fd_.get(), make_bool_ack(CommandId::LispSetRunning, true));
+              }
+            } else if (id == static_cast<std::uint8_t>(CommandId::CustomAppData)) {
+              record_management(id);
+              ++custom_app_requests;
+              if (respond_to_management.load()) {
+                write_all(server_fd_.get(), frame_payload(*payload));
               }
             } else if (id ==
                            static_cast<std::uint8_t>(CommandId::AppDisableOutput) &&
@@ -1614,6 +1621,31 @@ void test_lisp_management() {
   client.disconnect();
 }
 
+void test_custom_app_data() {
+  FakeVesc fake;
+  auto config = config_for(fake);
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+
+  ControllerClient client(config);
+  assert(client.connect());
+  auto first = std::async(std::launch::async, [&] {
+    return client.request_custom_app_data({1, 2}, 500ms);
+  });
+  auto second = std::async(std::launch::async, [&] {
+    return client.request_custom_app_data({3}, 500ms);
+  });
+  assert(first.get() == std::vector<std::uint8_t>({1, 2}));
+  assert(second.get() == std::vector<std::uint8_t>({3}));
+  assert(fake.custom_app_requests.load() == 2);
+  assert(!client.request_custom_app_data({}, 500ms));
+
+  fake.respond_to_management.store(false);
+  assert(!client.request_custom_app_data({4}, 40ms));
+  wait_until([&] { return !client.is_connected(); }, 250ms,
+             "custom app timeout did not stop connection");
+}
+
 void test_foc_calibration_and_polling() {
   FakeVesc fake;
   auto config = config_for(fake);
@@ -2065,6 +2097,7 @@ int main() {
   test_configuration_management_and_polling();
   test_management_operations_are_serialized();
   test_lisp_management();
+  test_custom_app_data();
   test_foc_calibration_and_polling();
   test_foc_calibration_serializes_with_management_operations();
   test_foc_calibration_timeout_stops_connection();

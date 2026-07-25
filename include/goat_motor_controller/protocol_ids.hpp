@@ -62,6 +62,8 @@ enum class CommandId : std::uint8_t {
   SetAppConfig = 16,
   /** Read the active application configuration. */
   GetAppConfig = 17,
+  /** Exchange application-defined data with the running custom app. */
+  CustomAppData = 36,
   /** Detect and persist all local FOC motor parameters. */
   DetectApplyAllFoc = 58,
   /** Temporarily suppress application-generated motor output. */

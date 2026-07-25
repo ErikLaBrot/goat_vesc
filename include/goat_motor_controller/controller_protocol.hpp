@@ -62,6 +62,8 @@ public:
   static Payload build_lisp_write_request(const Payload& chunk, std::uint32_t offset);
   /** @brief Builds a request to start or stop LispBM execution. */
   static Payload build_lisp_set_running_request(bool running);
+  /** @brief Builds a `COMM_CUSTOM_APP_DATA` request for the running custom app. */
+  static Payload build_custom_app_data_request(const Payload& data);
   /** @brief Builds the firmware-7.00 local FOC detection-and-apply request. */
   static Payload build_foc_calibration_request(const FocCalibrationParameters& parameters);
   /** @brief Builds a fire-and-forget application-output suppression command. */
@@ -137,6 +139,8 @@ public:
   static bool parse_lisp_write_ack(const Payload& payload, std::uint32_t expected_offset);
   /** @brief Validates an accepted ID-plus-boolean acknowledgement. */
   static bool parse_bool_ack(const Payload& payload, CommandId expected_id);
+  /** @brief Parses and strips a `COMM_CUSTOM_APP_DATA` reply ID. */
+  static std::optional<Payload> parse_custom_app_data_reply(const Payload& payload);
   /** @brief Parses the signed firmware result from a FOC calibration reply. */
   static std::optional<std::int16_t> parse_foc_calibration_reply(const Payload& payload);
 
