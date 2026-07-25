@@ -7,7 +7,7 @@ packet framing or serial arbitration themselves.
 
 ## Discovery And Lifecycle
 
-- `ControllerClient::find_devices()`: Return visible `/dev/ttyACM*` candidates.
+- `ControllerClient::find_devices()`: Return visible USB serial candidates.
 - `connect()`: Open the configured transport and start the background I/O
   thread.
 - `disconnect()`: Stop the background thread and close the transport.

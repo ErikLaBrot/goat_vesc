@@ -163,14 +163,17 @@ void ControllerClient::SubscriptionHandle::reset() {
 }
 
 std::vector<std::string> ControllerClient::find_devices() {
-  ::glob_t g{};
   std::vector<std::string> result;
-  if (::glob("/dev/ttyACM*", 0, nullptr, &g) == 0) {
-    for (std::size_t i = 0; i < g.gl_pathc; ++i) {
-      result.emplace_back(g.gl_pathv[i]);
+  for (const char* pattern :
+       {"/dev/ttyACM*", "/dev/ttyUSB*", "/dev/cu.usb*"}) {
+    ::glob_t matches{};
+    if (::glob(pattern, 0, nullptr, &matches) == 0) {
+      for (std::size_t index = 0; index < matches.gl_pathc; ++index) {
+        result.emplace_back(matches.gl_pathv[index]);
+      }
     }
+    ::globfree(&matches);
   }
-  ::globfree(&g);
   return result;
 }
 
