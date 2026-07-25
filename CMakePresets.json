@@ -12,7 +12,7 @@
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
         "BUILD_TESTING": "ON",
-        "GOAT_VESC_BUILD_EXAMPLES": "ON"
+        "GOAT_MOTOR_CONTROLLER_BUILD_EXAMPLES": "ON"
       }
     },
     {
@@ -23,26 +23,26 @@
       "name": "strict-analysis",
       "inherits": "base",
       "cacheVariables": {
-        "GOAT_VESC_ENABLE_CLANG_TIDY": "ON",
-        "GOAT_VESC_ENABLE_CPPCHECK": "ON",
-        "GOAT_VESC_ENABLE_WERROR": "ON"
+        "GOAT_MOTOR_CONTROLLER_ENABLE_CLANG_TIDY": "ON",
+        "GOAT_MOTOR_CONTROLLER_ENABLE_CPPCHECK": "ON",
+        "GOAT_MOTOR_CONTROLLER_ENABLE_WERROR": "ON"
       }
     },
     {
       "name": "asan-ubsan",
       "inherits": "base",
       "cacheVariables": {
-        "GOAT_VESC_ENABLE_WERROR": "ON",
-        "GOAT_VESC_ENABLE_ASAN": "ON",
-        "GOAT_VESC_ENABLE_UBSAN": "ON"
+        "GOAT_MOTOR_CONTROLLER_ENABLE_WERROR": "ON",
+        "GOAT_MOTOR_CONTROLLER_ENABLE_ASAN": "ON",
+        "GOAT_MOTOR_CONTROLLER_ENABLE_UBSAN": "ON"
       }
     },
     {
       "name": "tsan",
       "inherits": "base",
       "cacheVariables": {
-        "GOAT_VESC_ENABLE_WERROR": "ON",
-        "GOAT_VESC_ENABLE_TSAN": "ON"
+        "GOAT_MOTOR_CONTROLLER_ENABLE_WERROR": "ON",
+        "GOAT_MOTOR_CONTROLLER_ENABLE_TSAN": "ON"
       }
     }
   ],

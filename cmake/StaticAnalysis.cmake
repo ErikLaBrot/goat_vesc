@@ -1,4 +1,4 @@
-function(goat_vesc_enable_warnings target_name)
+function(goat_motor_controller_enable_warnings target_name)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(${target_name} PRIVATE
       -Wall
@@ -14,20 +14,20 @@ function(goat_vesc_enable_warnings target_name)
       -Wundef
     )
 
-    if(GOAT_VESC_ENABLE_WERROR)
+    if(GOAT_MOTOR_CONTROLLER_ENABLE_WERROR)
       target_compile_options(${target_name} PRIVATE -Werror)
     endif()
   endif()
 endfunction()
 
-if(GOAT_VESC_ENABLE_CLANG_TIDY)
+if(GOAT_MOTOR_CONTROLLER_ENABLE_CLANG_TIDY)
   set(CMAKE_CXX_CLANG_TIDY clang-tidy --quiet)
-  if(GOAT_VESC_ENABLE_WERROR)
+  if(GOAT_MOTOR_CONTROLLER_ENABLE_WERROR)
     list(APPEND CMAKE_CXX_CLANG_TIDY --warnings-as-errors=*)
   endif()
 endif()
 
-if(GOAT_VESC_ENABLE_CPPCHECK)
+if(GOAT_MOTOR_CONTROLLER_ENABLE_CPPCHECK)
   set(CMAKE_CXX_CPPCHECK
     cppcheck
     --enable=warning,style,performance,portability
@@ -37,7 +37,7 @@ if(GOAT_VESC_ENABLE_CPPCHECK)
     --quiet
     --suppress=missingIncludeSystem
   )
-  if(GOAT_VESC_ENABLE_WERROR)
+  if(GOAT_MOTOR_CONTROLLER_ENABLE_WERROR)
     list(APPEND CMAKE_CXX_CPPCHECK --error-exitcode=2)
   endif()
 endif()

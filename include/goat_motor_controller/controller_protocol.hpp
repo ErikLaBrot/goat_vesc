@@ -1,6 +1,6 @@
 /**
- * @file vesc_protocol.hpp
- * @brief Typed request builders and response parsers for supported VESC messages.
+ * @file controller_protocol.hpp
+ * @brief Typed request builders and response parsers for supported controller messages.
  */
 
 #pragma once
@@ -9,15 +9,15 @@
 #include <optional>
 #include <vector>
 
-#include "goat_vesc/protocol_ids.hpp"
-#include "goat_vesc/types.hpp"
+#include "goat_motor_controller/protocol_ids.hpp"
+#include "goat_motor_controller/types.hpp"
 
-namespace goat_vesc {
+namespace goat_motor_controller {
 
 /**
- * @brief Builds supported VESC requests and parses supported VESC replies.
+ * @brief Builds supported controller requests and parses supported replies.
  *
- * `VescProtocol` sits above packet framing primitives and below the transport
+ * `ControllerProtocol` sits above packet framing primitives and below the transport
  * owner. It knows how to encode and decode the message layouts used by the
  * current public client API.
  *
@@ -25,9 +25,9 @@ namespace goat_vesc {
  * non-finite, outside its documented normalized range, or not representable on
  * the wire.
  */
-class VescProtocol {
+class ControllerProtocol {
 public:
-  /** @brief Unframed VESC payload bytes. */
+  /** @brief Unframed controller payload bytes. */
   using Payload = std::vector<std::uint8_t>;
 
   /**
@@ -62,6 +62,10 @@ public:
   static Payload build_lisp_write_request(const Payload& chunk, std::uint32_t offset);
   /** @brief Builds a request to start or stop LispBM execution. */
   static Payload build_lisp_set_running_request(bool running);
+  /** @brief Builds the firmware-7.00 local FOC detection-and-apply request. */
+  static Payload build_foc_calibration_request(const FocCalibrationParameters& parameters);
+  /** @brief Builds a fire-and-forget application-output suppression command. */
+  static Payload build_app_disable_output_command(std::chrono::milliseconds duration);
   /** @brief Adds the firmware storage header, CRC, and zero flags to LispBM code. */
   static Payload pack_lisp_code(const LispCodeImage& image);
   /**
@@ -106,13 +110,13 @@ public:
    * @param payload Raw payload with framing and CRC already stripped.
    * @return Parsed motor-state sample or `std::nullopt` if malformed.
    */
-  static std::optional<VescMotorState> parse_get_values(const Payload& payload);
+  static std::optional<MotorState> parse_get_values(const Payload& payload);
   /**
    * @brief Parses a `COMM_GET_IMU_DATA` payload.
    * @param payload Raw payload with framing and CRC already stripped.
    * @return Parsed IMU sample or `std::nullopt` if malformed.
    */
-  static std::optional<VescIMUData> parse_get_imu_data(const Payload& payload);
+  static std::optional<ImuData> parse_get_imu_data(const Payload& payload);
   /** @brief Parses and strips a motor-configuration response ID. */
   static std::optional<MotorConfigImage> parse_motor_config(const Payload& payload);
   /** @brief Parses and strips an application-configuration response ID. */
@@ -128,16 +132,18 @@ public:
                                                       std::uint32_t& total_size,
                                                       std::uint32_t& offset);
   /** @brief Validates a one-byte configuration acknowledgement. */
-  static bool parse_config_ack(const Payload& payload, VescPacketCommID expected_id);
+  static bool parse_config_ack(const Payload& payload, CommandId expected_id);
   /** @brief Validates an accepted LispBM write acknowledgement and offset. */
   static bool parse_lisp_write_ack(const Payload& payload, std::uint32_t expected_offset);
   /** @brief Validates an accepted ID-plus-boolean acknowledgement. */
-  static bool parse_bool_ack(const Payload& payload, VescPacketCommID expected_id);
+  static bool parse_bool_ack(const Payload& payload, CommandId expected_id);
+  /** @brief Parses the signed firmware result from a FOC calibration reply. */
+  static std::optional<std::int16_t> parse_foc_calibration_reply(const Payload& payload);
 
 private:
-  // Wraps a payload in the VESC framing: [start | len... | payload | crc | stop]
+  // Wraps a payload in the firmware framing: [start | len... | payload | crc | stop]
   static Payload frame(const Payload& payload);
   static std::uint16_t crc16ccitt(const Payload& data) noexcept;
 };
 
-} // namespace goat_vesc
+} // namespace goat_motor_controller

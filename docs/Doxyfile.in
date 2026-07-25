@@ -1,6 +1,6 @@
-PROJECT_NAME           = goat_vesc
-PROJECT_BRIEF          = Small C++ VESC serial client library
-OUTPUT_DIRECTORY       = @GOAT_VESC_DOCS_OUTPUT_DIR@
+PROJECT_NAME           = goat_motor_controller
+PROJECT_BRIEF          = Small C++ motor-controller serial client library
+OUTPUT_DIRECTORY       = @GOAT_MOTOR_CONTROLLER_DOCS_OUTPUT_DIR@
 CREATE_SUBDIRS         = NO
 ALLOW_UNICODE_NAMES    = NO
 JAVADOC_AUTOBRIEF      = YES

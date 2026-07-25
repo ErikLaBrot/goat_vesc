@@ -1,6 +1,6 @@
 /**
- * @file vesc_client.hpp
- * @brief Thread-safe high-level client for VESC serial communication.
+ * @file controller_client.hpp
+ * @brief Thread-safe high-level client for motor-controller serial communication.
  */
 
 #pragma once
@@ -19,14 +19,14 @@
 #include <unordered_map>
 #include <vector>
 
-#include "goat_vesc/packet_parser.hpp"
-#include "goat_vesc/types.hpp"
-#include "goat_vesc/vesc_protocol.hpp"
+#include "goat_motor_controller/packet_parser.hpp"
+#include "goat_motor_controller/types.hpp"
+#include "goat_motor_controller/controller_protocol.hpp"
 
-namespace goat_vesc {
+namespace goat_motor_controller {
 
 /**
- * @brief Thread-safe VESC client with a single transport-owner thread.
+ * @brief Thread-safe controller client with a single transport-owner thread.
  *
  * Design goals:
  * - Hide packet framing/parsing behind a small typed API.
@@ -41,18 +41,18 @@ namespace goat_vesc {
  *
  * Safety note:
  * - This class detects transport loss and stops queueing/sending commands.
- * - `VescConfig::command_watchdog_*` can also enable an opt-in stale-command
+ * - `ControllerConfig::command_watchdog_*` can also enable an opt-in stale-command
  *   watchdog that sends one safe-stop command when control input stops
  *   refreshing.
  * - The watchdog is disabled by default, so callers that need dropout safety
- *   should still configure VESC-side timeouts as a backstop.
+ *   should still configure firmware-side timeouts as a backstop.
  */
-class VescClient {
+class ControllerClient {
 public:
   /** @brief Callback invoked when a fresh IMU sample is decoded. */
-  using ImuCallback = std::function<void(const VescIMUData&)>;
+  using ImuCallback = std::function<void(const ImuData&)>;
   /** @brief Callback invoked when a fresh motor-state sample is decoded. */
-  using MotorStateCallback = std::function<void(const VescMotorState&)>;
+  using MotorStateCallback = std::function<void(const MotorState&)>;
 
   /**
    * @brief RAII token for a subscription created by subscribe_imu() or
@@ -93,7 +93,7 @@ public:
     }
 
   private:
-    friend class VescClient;
+    friend class ControllerClient;
     explicit SubscriptionHandle(std::function<void()> unsubscribe);
 
     std::function<void()> unsubscribe_;
@@ -106,12 +106,12 @@ public:
    *
    * @param config Runtime configuration copied into the client.
    */
-  explicit VescClient(VescConfig config);
+  explicit ControllerClient(ControllerConfig config);
   /** @brief Disconnects the transport if still connected. */
-  ~VescClient();
+  ~ControllerClient();
 
-  VescClient(const VescClient&) = delete;
-  VescClient& operator=(const VescClient&) = delete;
+  ControllerClient(const ControllerClient&) = delete;
+  ControllerClient& operator=(const ControllerClient&) = delete;
 
   /**
    * @brief Returns currently visible `/dev/ttyACM*` candidates.
@@ -159,18 +159,18 @@ public:
    * @brief Returns the current bridge-facing polling and watchdog configuration.
    * @return Snapshot including runtime-updated poll intervals.
    */
-  VescClientConfigSnapshot config_snapshot() const;
+  ControllerConfigSnapshot config_snapshot() const;
 
   /**
    * @brief Returns the latest cached motor-state sample, if any.
    * @return Most recent motor-state sample seen by the client.
    */
-  std::optional<VescMotorState> latest_motor_state() const;
+  std::optional<MotorState> latest_motor_state() const;
   /**
    * @brief Returns the latest cached IMU sample, if any.
    * @return Most recent IMU sample seen by the client.
    */
-  std::optional<VescIMUData> latest_imu() const;
+  std::optional<ImuData> latest_imu() const;
 
   /**
    * @brief Registers a callback invoked whenever a fresh IMU sample is decoded.
@@ -264,7 +264,7 @@ public:
    * @param timeout Overall operation deadline.
    * @return Controller operation result.
    */
-  VescOperationResult write_motor_config(const MotorConfigImage& image,
+  OperationResult write_motor_config(const MotorConfigImage& image,
                                          std::chrono::milliseconds timeout);
 
   /**
@@ -281,7 +281,7 @@ public:
    * @param timeout Overall operation deadline.
    * @return Controller operation result.
    */
-  VescOperationResult write_app_config(const AppConfigImage& image, AppConfigStorage storage,
+  OperationResult write_app_config(const AppConfigImage& image, AppConfigStorage storage,
                                        std::chrono::milliseconds timeout);
 
   /**
@@ -299,7 +299,7 @@ public:
    * @param timeout Overall operation deadline.
    * @return Controller operation result.
    */
-  VescOperationResult erase_lisp_code(std::chrono::milliseconds timeout);
+  OperationResult erase_lisp_code(std::chrono::milliseconds timeout);
 
   /**
    * @brief Erases and uploads LispBM code, leaving execution stopped.
@@ -310,7 +310,7 @@ public:
    * @param timeout Overall operation deadline.
    * @return Controller operation result.
    */
-  VescOperationResult write_lisp_code(const LispCodeImage& image,
+  OperationResult write_lisp_code(const LispCodeImage& image,
                                       std::chrono::milliseconds timeout);
 
   /**
@@ -319,10 +319,27 @@ public:
    * @param timeout Overall operation deadline.
    * @return Controller operation result.
    */
-  VescOperationResult set_lisp_running(bool running, std::chrono::milliseconds timeout);
+  OperationResult set_lisp_running(bool running, std::chrono::milliseconds timeout);
+
+  /**
+   * @brief Queues firmware application-output suppression without waiting for a reply.
+   *
+   * A zero duration reenables output. `true` only means the packet remains
+   * deliverable because this firmware command has no acknowledgement.
+   */
+  bool set_app_output_disabled(std::chrono::milliseconds duration);
+
+  /**
+   * @brief Runs firmware-7.00 local FOC detection and persists the detected motor config.
+   *
+   * Application output is suppressed for the operation and explicitly reenabled
+   * afterward when the connection remains usable. The operation never scans CAN.
+   */
+  FocCalibrationResult run_foc_calibration(const FocCalibrationParameters& parameters,
+                                           std::chrono::milliseconds timeout);
 
 private:
-  using Payload = VescPacketParser::Payload;
+  using Payload = PacketParser::Payload;
   using SteadyClock = std::chrono::steady_clock;
 
   struct QueryState {
@@ -365,12 +382,12 @@ private:
     bool armed{false};
   };
 
-  VescConfig config_;
+  ControllerConfig config_;
   std::mutex lifecycle_mutex_;
   int fd_{-1};
   int wake_pipe_[2]{-1, -1};
 
-  VescPacketParser parser_;
+  PacketParser parser_;
 
   std::thread io_thread_;
   std::atomic<bool> running_{false};
@@ -383,8 +400,8 @@ private:
   ControlWatchdogState control_watchdog_;
 
   mutable std::mutex cache_mutex_;
-  std::optional<VescMotorState> motor_state_cache_;
-  std::optional<VescIMUData> imu_data_cache_;
+  std::optional<MotorState> motor_state_cache_;
+  std::optional<ImuData> imu_data_cache_;
 
   std::shared_ptr<CallbackRegistry> callback_registry_;
 
@@ -397,15 +414,16 @@ private:
   void dispatch_payload(const Payload& payload, std::uint64_t stamp_ns);
   bool handle_request_timeout();
   std::optional<Payload> request_payload(std::vector<std::uint8_t> packet,
-                                         VescPacketCommID expected_id,
+                                         CommandId expected_id,
                                          SteadyClock::time_point deadline,
                                          bool stop_on_timeout);
   std::optional<MotorConfigImage>
   request_motor_config_until(SteadyClock::time_point deadline);
   std::optional<AppConfigImage> request_app_config_until(SteadyClock::time_point deadline);
-  VescOperationResult erase_lisp_code_until(std::uint32_t size,
+  OperationResult erase_lisp_code_until(std::uint32_t size,
                                             SteadyClock::time_point deadline);
 
+  bool enqueue_command(std::vector<std::uint8_t> packet, bool refresh_watchdog);
   bool enqueue_control_command(std::vector<std::uint8_t> packet);
   bool control_watchdog_enabled() const;
   std::optional<std::vector<std::uint8_t>>
@@ -414,8 +432,8 @@ private:
   void wake_io_thread() const;
   bool write_packet(const std::vector<std::uint8_t>& pkt);
   bool wait_until_writable();
-  void publish_imu(const VescIMUData& data);
-  void publish_motor_state(const VescMotorState& state);
+  void publish_imu(const ImuData& data);
+  void publish_motor_state(const MotorState& state);
   void clear_pending_work();
   void cleanup_transport_state();
 
@@ -424,7 +442,7 @@ private:
                                                         const SteadyClock::time_point& now);
   std::optional<ScheduledRequest> dequeue_ready_query(const SteadyClock::time_point& now);
 
-  friend struct VescClientTestAccess;
+  friend struct ControllerClientTestAccess;
 };
 
-} // namespace goat_vesc
+} // namespace goat_motor_controller

@@ -1,6 +1,6 @@
 # Bridge Readiness Checklist
 
-This document defines what "bridge-ready" means for `goat_vesc` on the GOAT
+This document defines what "bridge-ready" means for `goat_motor_controller` on the GOAT
 autonomous racer platform for bridge v1. It is intentionally lightweight: the
 goal is a practical release gate, not a formal specification.
 
@@ -71,7 +71,7 @@ bridge-v1 behavior.
 
 | ID | Requirement | Rationale | Priority | Status | Evidence |
 |---|---|---|---|---|---|
-| BRIDGE-TEL-001 | The library shall expose full IMU field support through `VescIMUData` and the IMU polling path. | The bridge needs a single typed IMU payload shape. | must have | covered | test |
+| BRIDGE-TEL-001 | The library shall expose full IMU field support through `ImuData` and the IMU polling path. | The bridge needs a single typed IMU payload shape. | must have | covered | test |
 | BRIDGE-TEL-002 | The library shall expose drive telemetry from `GetValues`, including `vin`, `current_in`, `current_motor`, `duty_cycle`, `rpm`, `temp_motor`, `temp_fet`, and `fault_code`. | Bridge power and health reporting depends on these fields. | must have | covered | test |
 | BRIDGE-TEL-003 | The library shall provide latest-value access for bridge telemetry reads. | The bridge needs cheap pull-based access in addition to callbacks. | must have | covered | test |
 | BRIDGE-TEL-004 | The library shall provide callback/subscription delivery for fresh IMU and motor-state samples. | The bridge needs push-based publishing without polling from user code. | must have | covered | test |
@@ -80,7 +80,7 @@ bridge-v1 behavior.
 
 | ID | Requirement | Rationale | Priority | Status | Evidence |
 |---|---|---|---|---|---|
-| BRIDGE-CFG-001 | The library shall allow the bridge to configure IMU and motor polling rates. | Polling cadence is controlled on the host side, not by the VESC. | must have | covered | test |
+| BRIDGE-CFG-001 | The library shall allow the bridge to configure IMU and motor polling rates. | Polling cadence is controlled on the host side, not by the controller firmware. | must have | covered | test |
 | BRIDGE-CFG-002 | The bridge-facing stack shall expose current polling/config behavior for introspection. | Operators should be able to tell what cadence/config the bridge is using. | must have | covered | test + doc |
 | BRIDGE-CFG-003 | The library shall keep firmware-version query support available for bridge diagnostics. | Firmware identification is useful for compatibility and field debugging. | should have later | covered | test |
 
@@ -113,5 +113,6 @@ bridge-v1 requirements and their public behavior. It does not require literal
 ## Out Of Scope For This Draft
 
 - Full-library requirements beyond bridge v1
-- Additional `GetValues` fields beyond the agreed bridge-v1 telemetry set
+- Additional `GetValues` fields beyond the agreed bridge-v1 telemetry set,
+  except the firmware timeout and kill-latch status used by fabrication safety
 - Deep runtime diagnostics beyond config introspection

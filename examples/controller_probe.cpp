@@ -2,13 +2,13 @@
  * Probe example for bring-up and smoke testing.
  *
  * Demonstrates:
- * - connecting to a VESC
+ * - connecting to a compatible motor controller
  * - querying firmware version
  * - waiting for IMU and motor-state samples
  * - printing decoded telemetry fields
  */
 
-#include "goat_vesc/vesc_client.hpp"
+#include "goat_motor_controller/controller_client.hpp"
 
 #include <chrono>
 #include <exception>
@@ -18,7 +18,7 @@
 #include <string>
 #include <thread>
 
-using namespace goat_vesc;
+using namespace goat_motor_controller;
 using namespace std::chrono_literals;
 
 namespace {
@@ -50,7 +50,7 @@ void print_fw(const std::optional<FwVersion>& fw) {
             << '\n';
 }
 
-void print_imu(const std::optional<VescIMUData>& imu) {
+void print_imu(const std::optional<ImuData>& imu) {
   if (!imu) {
     std::cout << "IMU: no sample received\n";
     return;
@@ -63,7 +63,7 @@ void print_imu(const std::optional<VescIMUData>& imu) {
             << "  gyro xyz: " << imu->gyro_x << ", " << imu->gyro_y << ", " << imu->gyro_z << '\n';
 }
 
-void print_motor_state(const std::optional<VescMotorState>& state) {
+void print_motor_state(const std::optional<MotorState>& state) {
   if (!state) {
     std::cout << "Motor state: no sample received\n";
     return;
@@ -77,7 +77,9 @@ void print_motor_state(const std::optional<VescMotorState>& state) {
             << '\n'
             << "  vin: " << state->vin << '\n'
             << "  temp_motor/temp_fet: " << state->temp_motor << ", " << state->temp_fet << '\n'
-            << "  fault_code: " << static_cast<int>(state->fault_code) << '\n';
+            << "  fault_code: " << static_cast<int>(state->fault_code) << '\n'
+            << "  command_timeout: " << state->has_timeout << '\n'
+            << "  kill_switch_active: " << state->kill_switch_active << '\n';
 }
 
 } // namespace
@@ -95,7 +97,7 @@ int main(int argc, char** argv) {
       }
     }
 
-    VescConfig config;
+    ControllerConfig config;
     if (argc > 1) {
       config.device_path = argv[1];
     }
@@ -113,7 +115,7 @@ int main(int argc, char** argv) {
     config.poll_response_timeout = 50ms;
     config.query_guard_window = 5ms;
 
-    std::cout << "VESC probe starting\n";
+    std::cout << "Motor-controller probe starting\n";
     if (!config.device_path.empty()) {
       std::cout << "Device: " << config.device_path << '\n';
     } else {
@@ -121,7 +123,7 @@ int main(int argc, char** argv) {
     }
     std::cout << "Baud: " << config.baud << '\n';
 
-    VescClient client(config);
+    ControllerClient client(config);
     if (!client.connect()) {
       std::cerr << "Connect failed\n";
       return 2;

@@ -8,7 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace goat_vesc {
+namespace goat_motor_controller {
 
 /**
  * @brief Maximum payload size accepted by the supported VESC framing modes.
@@ -39,7 +39,7 @@ constexpr std::size_t kMaxLispCodeBytes = (512U * 1024U) - 14U;
 /**
  * @brief Packet command IDs used by the supported message set.
  */
-enum class VescPacketCommID : std::uint8_t {
+enum class CommandId : std::uint8_t {
   /** Firmware version request/reply. */
   FwVersion = 0,
   /** Motor telemetry request/reply. */
@@ -62,6 +62,10 @@ enum class VescPacketCommID : std::uint8_t {
   SetAppConfig = 16,
   /** Read the active application configuration. */
   GetAppConfig = 17,
+  /** Detect and persist all local FOC motor parameters. */
+  DetectApplyAllFoc = 58,
+  /** Temporarily suppress application-generated motor output. */
+  AppDisableOutput = 63,
   /** IMU telemetry request/reply. */
   GetImuData = 65,
   /** Read a chunk of stored LispBM code. */
@@ -76,4 +80,4 @@ enum class VescPacketCommID : std::uint8_t {
   SetAppConfigNoStore = 149,
 };
 
-} // namespace goat_vesc
+} // namespace goat_motor_controller

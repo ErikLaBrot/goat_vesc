@@ -1,6 +1,6 @@
 /**
  * @file packet_parser.hpp
- * @brief Incremental parser for framed VESC serial packets.
+ * @brief Incremental parser for framed controller serial packets.
  */
 
 #pragma once
@@ -9,10 +9,10 @@
 #include <optional>
 #include <vector>
 
-namespace goat_vesc {
+namespace goat_motor_controller {
 
 /**
- * @brief Incrementally decodes framed VESC packets from a byte stream.
+ * @brief Incrementally decodes framed controller packets from a byte stream.
  *
  * The parser owns an internal buffer and can be fed one byte at a time or in
  * batches. It validates framing and CRC before returning a payload. Because
@@ -20,13 +20,13 @@ namespace goat_vesc {
  * within one declared candidate before a subsequent frame restores
  * synchronization.
  */
-class VescPacketParser {
+class PacketParser {
 public:
-  /** @brief Framing-free VESC packet payload. */
+  /** @brief Framing-free controller packet payload. */
   using Payload = std::vector<std::uint8_t>;
 
   /** @brief Creates an empty parser with no buffered bytes. */
-  VescPacketParser() = default;
+  PacketParser() = default;
 
   /** @brief Clears buffered state and restarts parsing from an empty stream. */
   void reset();
@@ -53,4 +53,4 @@ private:
   static std::uint16_t crc16ccitt_(const std::vector<std::uint8_t>& data) noexcept;
 };
 
-} // namespace goat_vesc
+} // namespace goat_motor_controller

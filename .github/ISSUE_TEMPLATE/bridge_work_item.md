@@ -12,7 +12,7 @@ Describe the exact change this issue authorizes.
 
 ## Release Context
 
-- Milestone: `goat_vesc_driver v1.0`
+- Milestone: `goat_motor_controller_driver v1.0`
 - Meta issue: #
 - Related: #
 

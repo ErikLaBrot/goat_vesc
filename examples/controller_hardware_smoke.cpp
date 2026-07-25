@@ -12,7 +12,7 @@
  * shipped public API surface.
  */
 
-#include "goat_vesc/vesc_client.hpp"
+#include "goat_motor_controller/controller_client.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -30,7 +30,7 @@
 #include <thread>
 #include <vector>
 
-using namespace goat_vesc;
+using namespace goat_motor_controller;
 using namespace std::chrono_literals;
 
 namespace {
@@ -67,8 +67,8 @@ struct ThrottleSteeringCommand {
 struct TelemetrySnapshot {
   std::size_t imu_samples{0};
   std::size_t motor_samples{0};
-  std::optional<VescIMUData> imu;
-  std::optional<VescMotorState> motor;
+  std::optional<ImuData> imu;
+  std::optional<MotorState> motor;
   std::optional<std::chrono::milliseconds> imu_age;
   std::optional<std::chrono::milliseconds> motor_age;
   bool fault_observed{false};
@@ -76,14 +76,14 @@ struct TelemetrySnapshot {
 
 class TelemetryMonitor {
 public:
-  void on_imu(const VescIMUData& imu) {
+  void on_imu(const ImuData& imu) {
     std::lock_guard lock(mutex_);
     ++imu_samples_;
     last_imu_ = imu;
     last_imu_seen_ = SteadyClock::now();
   }
 
-  void on_motor(const VescMotorState& motor) {
+  void on_motor(const MotorState& motor) {
     std::lock_guard lock(mutex_);
     ++motor_samples_;
     last_motor_ = motor;
@@ -116,8 +116,8 @@ private:
   mutable std::mutex mutex_;
   std::size_t imu_samples_{0};
   std::size_t motor_samples_{0};
-  std::optional<VescIMUData> last_imu_;
-  std::optional<VescMotorState> last_motor_;
+  std::optional<ImuData> last_imu_;
+  std::optional<MotorState> last_motor_;
   SteadyClock::time_point last_imu_seen_;
   SteadyClock::time_point last_motor_seen_;
   bool fault_observed_{false};
@@ -261,7 +261,7 @@ bool wait_until(Predicate predicate, std::chrono::milliseconds timeout) {
 }
 
 template <typename T, typename Sender>
-PhaseResult stream_phase(const std::string& name, const std::vector<T>& values, VescClient& client,
+PhaseResult stream_phase(const std::string& name, const std::vector<T>& values, ControllerClient& client,
                          std::chrono::milliseconds phase_duration,
                          std::chrono::milliseconds command_period,
                          const std::atomic<bool>& stop_requested, Sender sender) {
@@ -313,7 +313,7 @@ void print_status(const TelemetrySnapshot& snapshot) {
   std::cout << '\n';
 }
 
-bool queue_safe_outputs(VescClient& client, float servo_center) {
+bool queue_safe_outputs(ControllerClient& client, float servo_center) {
   const bool ok =
       client.set_current(0.0f) && client.set_servo_pos(clamp_servo(servo_center));
   std::this_thread::sleep_for(300ms);
@@ -326,7 +326,7 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_args(argc, argv);
 
-    VescConfig config;
+    ControllerConfig config;
     config.device_path = options.device_path;
     config.baud = options.baud;
     config.imu_poll_interval = options.imu_poll_interval;
@@ -336,7 +336,7 @@ int main(int argc, char** argv) {
     config.command_watchdog_timeout = 500ms;
     config.command_watchdog_action = ControlWatchdogAction::Coast;
 
-    std::cout << "VESC hardware smoke starting\n";
+    std::cout << "Motor-controller hardware smoke starting\n";
     std::cout << "  device: "
               << (config.device_path.empty() ? "auto-detect first /dev/ttyACM*"
                                              : config.device_path)
@@ -348,7 +348,7 @@ int main(int argc, char** argv) {
     std::cout << "  status_ms: " << options.status_interval.count() << '\n';
     std::cout << "  arm_actuators: " << (options.arm_actuators ? "yes" : "no") << '\n';
 
-    VescClient client(config);
+    ControllerClient client(config);
     if (!client.connect()) {
       std::cerr << "Connect failed\n";
       return 2;
@@ -356,9 +356,9 @@ int main(int argc, char** argv) {
 
     TelemetryMonitor monitor;
     auto imu_handle =
-        client.subscribe_imu([&monitor](const VescIMUData& imu) { monitor.on_imu(imu); });
+        client.subscribe_imu([&monitor](const ImuData& imu) { monitor.on_imu(imu); });
     auto motor_handle = client.subscribe_motor_state(
-        [&monitor](const VescMotorState& motor) { monitor.on_motor(motor); });
+        [&monitor](const MotorState& motor) { monitor.on_motor(motor); });
     (void)imu_handle;
     (void)motor_handle;
 
@@ -430,7 +430,7 @@ int main(int argc, char** argv) {
               return stream_phase<float>(
                   "duty", {0.0f, options.duty * 0.5f, options.duty, options.duty * 0.5f, 0.0f},
                   client, options.phase_duration, 120ms, stop_commands,
-                  [](VescClient& c, float value) { return c.set_duty(value); });
+                  [](ControllerClient& c, float value) { return c.set_duty(value); });
             })) {
           command_thread_done.store(true);
           return;
@@ -442,7 +442,7 @@ int main(int argc, char** argv) {
                   "current",
                   {0.0f, options.current * 0.5f, options.current, options.current * 0.5f, 0.0f},
                   client, options.phase_duration, 120ms, stop_commands,
-                  [](VescClient& c, float value) { return c.set_current(value); });
+                  [](ControllerClient& c, float value) { return c.set_current(value); });
             })) {
           command_thread_done.store(true);
           return;
@@ -452,7 +452,7 @@ int main(int argc, char** argv) {
         if (!run_phase(3, [&] {
               return stream_phase<int>("rpm", {0, options.rpm / 2, options.rpm, options.rpm / 2, 0},
                                        client, options.phase_duration, 120ms, stop_commands,
-                                       [](VescClient& c, int value) { return c.set_rpm(value); });
+                                       [](ControllerClient& c, int value) { return c.set_rpm(value); });
             })) {
           command_thread_done.store(true);
           return;
@@ -468,7 +468,7 @@ int main(int argc, char** argv) {
                    {options.duty * 0.5f, right},
                    {0.0f, options.servo_center}},
                   client, options.phase_duration, 140ms, stop_commands,
-                  [](VescClient& c, const ThrottleSteeringCommand& command) {
+                  [](ControllerClient& c, const ThrottleSteeringCommand& command) {
                     return c.set_duty(command.duty) && c.set_servo_pos(clamp_servo(command.servo));
                   });
             })) {
@@ -485,7 +485,7 @@ int main(int argc, char** argv) {
                     {options.brake_current * 0.5f, options.brake_current,
                      options.brake_current * 0.5f},
                     client, options.phase_duration, 120ms, stop_commands,
-                    [](VescClient& c, float value) { return c.set_current_brake(value); });
+                    [](ControllerClient& c, float value) { return c.set_current_brake(value); });
               })) {
             command_thread_done.store(true);
             return;
@@ -500,7 +500,7 @@ int main(int argc, char** argv) {
                   "servo",
                   {options.servo_center, left, options.servo_center, right, options.servo_center},
                   client, options.phase_duration, 160ms, stop_commands,
-                  [](VescClient& c, float value) { return c.set_servo_pos(clamp_servo(value)); });
+                  [](ControllerClient& c, float value) { return c.set_servo_pos(clamp_servo(value)); });
             })) {
           command_thread_done.store(true);
           return;

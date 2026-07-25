@@ -1,5 +1,5 @@
-#include "goat_vesc/packet_parser.hpp"
-#include "goat_vesc/protocol_ids.hpp"
+#include "goat_motor_controller/packet_parser.hpp"
+#include "goat_motor_controller/protocol_ids.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -14,13 +14,13 @@ constexpr std::uint8_t kStopByte = 3;
 
 } // namespace
 
-namespace goat_vesc {
+namespace goat_motor_controller {
 
-void VescPacketParser::reset() {
+void PacketParser::reset() {
   buffer_.clear();
 }
 
-std::optional<VescPacketParser::Payload> VescPacketParser::feed_byte(std::uint8_t byte) {
+std::optional<PacketParser::Payload> PacketParser::feed_byte(std::uint8_t byte) {
   buffer_.push_back(byte);
 
   for (;;) {
@@ -56,8 +56,8 @@ std::optional<VescPacketParser::Payload> VescPacketParser::feed_byte(std::uint8_
   }
 }
 
-std::vector<VescPacketParser::Payload>
-VescPacketParser::feed_bytes(const std::vector<std::uint8_t>& bytes) {
+std::vector<PacketParser::Payload>
+PacketParser::feed_bytes(const std::vector<std::uint8_t>& bytes) {
 
   std::vector<Payload> out;
 
@@ -70,8 +70,8 @@ VescPacketParser::feed_bytes(const std::vector<std::uint8_t>& bytes) {
   return out;
 }
 
-VescPacketParser::DecodeResult
-VescPacketParser::try_decode_packet_(Payload& payload_out, std::size_t& packet_size_out) const {
+PacketParser::DecodeResult
+PacketParser::try_decode_packet_(Payload& payload_out, std::size_t& packet_size_out) const {
   const std::size_t available = buffer_.size();
   if (available == 0) {
     return DecodeResult::NeedMoreData;
@@ -92,7 +92,7 @@ VescPacketParser::try_decode_packet_(Payload& payload_out, std::size_t& packet_s
     packet_size_out = header_len;
     payload_len = buffer_[1];
 
-    // VESC rejects zero-length packets
+    // The firmware rejects zero-length packets.
     if (payload_len < 1) {
       return DecodeResult::InvalidHeader;
     }
@@ -154,7 +154,7 @@ VescPacketParser::try_decode_packet_(Payload& payload_out, std::size_t& packet_s
   return DecodeResult::Success;
 }
 
-std::uint16_t VescPacketParser::crc16ccitt_(const std::vector<std::uint8_t>& data) noexcept {
+std::uint16_t PacketParser::crc16ccitt_(const std::vector<std::uint8_t>& data) noexcept {
   std::uint16_t crc = 0;
 
   for (const auto byte : data) {
@@ -170,4 +170,4 @@ std::uint16_t VescPacketParser::crc16ccitt_(const std::vector<std::uint8_t>& dat
   return crc;
 }
 
-} // namespace goat_vesc
+} // namespace goat_motor_controller
