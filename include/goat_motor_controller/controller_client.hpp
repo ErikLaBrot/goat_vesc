@@ -248,6 +248,19 @@ public:
   std::optional<FwVersion> request_fw_version(std::chrono::milliseconds timeout);
 
   /**
+   * @brief Erases, uploads, and boots one directly connected VESC application image.
+   *
+   * The caller owns firmware/hardware compatibility and operator authorization.
+   * The operation never scans or forwards over CAN.
+   *
+   * @param image VESC Tool-compatible heatshrink image.
+   * @param timeout Overall operation deadline.
+   * @return Controller operation result.
+   */
+  OperationResult update_firmware(const FirmwareImage& image,
+                                  std::chrono::milliseconds timeout);
+
+  /**
    * @brief Reads the active firmware-native motor configuration.
    *
    * The returned bytes include the firmware-generated schema signature.

@@ -74,6 +74,14 @@ struct LispCodeImage {
   std::vector<std::uint8_t> bytes;
 };
 
+/** @brief VESC Tool-compatible heatshrink firmware application image. */
+struct FirmwareImage {
+  /** Original uncompressed application image size supplied to the erase command. */
+  std::uint32_t uncompressed_size{0};
+  /** Heatshrink-compressed application bytes, without the VESC size/CRC header. */
+  std::vector<std::uint8_t> heatshrink_bytes;
+};
+
 /**
  * @brief Inputs to the firmware's local FOC detection-and-apply operation.
  *
@@ -162,6 +170,10 @@ struct FwVersion {
   std::uint8_t major{0};
   /** Minor firmware version number. */
   std::uint8_t minor{0};
+  /** Hardware name reported by firmware, such as `EDU`, when present. */
+  std::string hardware_name;
+  /** Hardware type byte reported by firmware, when present. VESC is type 0. */
+  std::optional<std::uint8_t> hardware_type;
 };
 
 /**

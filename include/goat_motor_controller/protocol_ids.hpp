@@ -42,6 +42,12 @@ constexpr std::size_t kMaxLispCodeBytes = (512U * 1024U) - 14U;
 enum class CommandId : std::uint8_t {
   /** Firmware version request/reply. */
   FwVersion = 0,
+  /** Reboot into the newly uploaded firmware. */
+  JumpToBootloader = 1,
+  /** Erase the staging area for a firmware application image. */
+  EraseNewApp = 2,
+  /** Write one firmware application-image chunk. */
+  WriteNewAppData = 3,
   /** Motor telemetry request/reply. */
   GetValues = 4,
   /** Duty-cycle command. */

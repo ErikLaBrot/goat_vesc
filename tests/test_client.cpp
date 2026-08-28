@@ -2068,6 +2068,39 @@ void test_real_tty_empty_read_does_not_stop_client() {
   client.disconnect();
 }
 
+void test_firmware_update_transaction() {
+  PseudoTerminal tty;
+  ControllerConfig config;
+  config.device_path = tty.slave_path;
+  config.imu_poll_interval = 0ms;
+  config.motor_poll_interval = 0ms;
+
+  ControllerClient client(config);
+  assert(client.connect());
+  const FirmwareImage image{524280, {0x10, 0x20, 0x30}};
+  auto update = std::async(std::launch::async, [&] {
+    return client.update_firmware(image, 2s);
+  });
+
+  const auto erase = ControllerProtocol::build_erase_firmware_request(image.uncompressed_size);
+  assert(read_exact(tty.master_fd(), erase.size()) == erase);
+  write_all(tty.master_fd(), make_bool_ack(CommandId::EraseNewApp, true));
+
+  const auto packed = ControllerProtocol::pack_firmware_image(image);
+  const auto write = ControllerProtocol::build_write_firmware_request(packed, 0);
+  assert(read_exact(tty.master_fd(), write.size()) == write);
+  std::vector<std::uint8_t> write_reply{
+      static_cast<std::uint8_t>(CommandId::WriteNewAppData), 1};
+  append_i32(write_reply, 0);
+  write_all(tty.master_fd(), frame_payload(write_reply));
+
+  const auto jump = ControllerProtocol::build_jump_to_bootloader_command();
+  assert(read_exact(tty.master_fd(), jump.size()) == jump);
+  assert(update.get() == OperationResult::Success);
+  assert(client.update_firmware({}, 100ms) == OperationResult::InvalidData);
+  client.disconnect();
+}
+
 void test_destruction_after_async_transport_failure_is_safe() {
   WriteFailingFakeTransport fake;
 
@@ -2128,6 +2161,7 @@ int main() {
   test_transport_eof_stops_client();
   test_custom_opener_failures_are_contained();
   test_real_tty_empty_read_does_not_stop_client();
+  test_firmware_update_transaction();
   test_destruction_after_async_transport_failure_is_safe();
   return 0;
 }

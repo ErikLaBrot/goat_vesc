@@ -117,6 +117,28 @@ void test_build_requests_exact_bytes() {
 }
 
 void test_build_management_requests_exact_bytes() {
+  std::vector<std::uint8_t> erase_firmware{
+      static_cast<std::uint8_t>(CommandId::EraseNewApp)};
+  append_i32(erase_firmware, 524280);
+  assert(ControllerProtocol::build_erase_firmware_request(524280) ==
+         frame_payload(erase_firmware));
+
+  std::vector<std::uint8_t> write_firmware{
+      static_cast<std::uint8_t>(CommandId::WriteNewAppData)};
+  append_i32(write_firmware, 384);
+  write_firmware.insert(write_firmware.end(), {0x10, 0x20, 0x30});
+  assert(ControllerProtocol::build_write_firmware_request({0x10, 0x20, 0x30}, 384) ==
+         frame_payload(write_firmware));
+  assert(ControllerProtocol::build_jump_to_bootloader_command() ==
+         frame_payload({static_cast<std::uint8_t>(CommandId::JumpToBootloader)}));
+
+  const FirmwareImage firmware{524280, {0x10, 0x20, 0x30}};
+  std::vector<std::uint8_t> packed_firmware{0xCC, 0x00, 0x00, 0x03};
+  append_u16(packed_firmware, crc16ccitt(firmware.heatshrink_bytes));
+  packed_firmware.insert(packed_firmware.end(), firmware.heatshrink_bytes.begin(),
+                         firmware.heatshrink_bytes.end());
+  assert(ControllerProtocol::pack_firmware_image(firmware) == packed_firmware);
+
   assert(ControllerProtocol::build_get_motor_config_request() ==
          frame_payload({static_cast<std::uint8_t>(CommandId::GetMotorConfig)}));
   assert(ControllerProtocol::build_get_app_config_request() ==
@@ -186,6 +208,25 @@ void test_build_management_requests_exact_bytes() {
 }
 
 void test_management_protocol_validation() {
+  assert(ControllerProtocol::build_erase_firmware_request(0).empty());
+  assert(ControllerProtocol::build_write_firmware_request({}, 0).empty());
+  assert(ControllerProtocol::build_write_firmware_request(
+             std::vector<std::uint8_t>(kMaxPayloadBytes - 4, 0), 0)
+             .empty());
+  assert(ControllerProtocol::pack_firmware_image({}).empty());
+  assert(ControllerProtocol::pack_firmware_image({1, {}}).empty());
+  assert(ControllerProtocol::parse_firmware_erase_ack(
+      {static_cast<std::uint8_t>(CommandId::EraseNewApp), 1}));
+  assert(!ControllerProtocol::parse_firmware_erase_ack(
+      {static_cast<std::uint8_t>(CommandId::EraseNewApp), 0}));
+  assert(ControllerProtocol::parse_firmware_write_ack(
+      {static_cast<std::uint8_t>(CommandId::WriteNewAppData), 1}, 384));
+  std::vector<std::uint8_t> firmware_write_ack{
+      static_cast<std::uint8_t>(CommandId::WriteNewAppData), 1};
+  append_i32(firmware_write_ack, 384);
+  assert(ControllerProtocol::parse_firmware_write_ack(firmware_write_ack, 384));
+  assert(!ControllerProtocol::parse_firmware_write_ack(firmware_write_ack, 385));
+
   assert(ControllerProtocol::build_set_motor_config_request(MotorConfigImage{{1, 2, 3}}).empty());
   assert(ControllerProtocol::build_set_app_config_request(AppConfigImage{{1, 2, 3}},
                                                     AppConfigStorage::Persistent)
@@ -342,6 +383,17 @@ void test_parse_fw_version() {
   assert(parsed.has_value());
   assert(parsed->major == 6);
   assert(parsed->minor == 5);
+  assert(parsed->hardware_name.empty());
+  assert(!parsed->hardware_type);
+
+  std::vector<std::uint8_t> identified{
+      static_cast<std::uint8_t>(CommandId::FwVersion), 7, 0, 'E', 'D', 'U', 0};
+  identified.insert(identified.end(), 12, 0xA5);
+  identified.insert(identified.end(), {0, 0, 0});
+  const auto identified_parsed = ControllerProtocol::parse_fw_version(identified);
+  assert(identified_parsed);
+  assert(identified_parsed->hardware_name == "EDU");
+  assert(identified_parsed->hardware_type == 0);
 
   assert(!ControllerProtocol::parse_fw_version({
               static_cast<std::uint8_t>(CommandId::GetValues),
@@ -353,6 +405,9 @@ void test_parse_fw_version() {
               static_cast<std::uint8_t>(CommandId::FwVersion),
               6,
           })
+              .has_value());
+  assert(!ControllerProtocol::parse_fw_version({
+              static_cast<std::uint8_t>(CommandId::FwVersion), 6, 5, 'E', 'D', 'U'})
               .has_value());
 }
 

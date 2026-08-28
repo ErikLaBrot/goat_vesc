@@ -1,5 +1,6 @@
 #include "goat_motor_controller/controller_protocol.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -124,6 +125,49 @@ ControllerProtocol::Payload ControllerProtocol::frame(const Payload& payload) {
 
 ControllerProtocol::Payload ControllerProtocol::build_fw_version_request() {
   return frame({static_cast<std::uint8_t>(CommandId::FwVersion)});
+}
+
+ControllerProtocol::Payload
+ControllerProtocol::build_erase_firmware_request(std::uint32_t uncompressed_size) {
+  if (uncompressed_size == 0) {
+    return {};
+  }
+  Payload payload{static_cast<std::uint8_t>(CommandId::EraseNewApp)};
+  append_integral_be(payload, uncompressed_size);
+  return frame(payload);
+}
+
+ControllerProtocol::Payload
+ControllerProtocol::build_write_firmware_request(const Payload& chunk, std::uint32_t offset) {
+  if (chunk.empty() || chunk.size() > kMaxPayloadBytes - 5U ||
+      chunk.size() > std::numeric_limits<std::uint32_t>::max() - offset) {
+    return {};
+  }
+  Payload payload{static_cast<std::uint8_t>(CommandId::WriteNewAppData)};
+  append_integral_be(payload, offset);
+  payload.insert(payload.end(), chunk.begin(), chunk.end());
+  return frame(payload);
+}
+
+ControllerProtocol::Payload ControllerProtocol::build_jump_to_bootloader_command() {
+  return frame({static_cast<std::uint8_t>(CommandId::JumpToBootloader)});
+}
+
+ControllerProtocol::Payload ControllerProtocol::pack_firmware_image(const FirmwareImage& image) {
+  constexpr std::size_t kMaxHeatshrinkBytes = 0x00FFFFFFU;
+  if (image.uncompressed_size == 0 || image.heatshrink_bytes.empty() ||
+      image.heatshrink_bytes.size() > kMaxHeatshrinkBytes) {
+    return {};
+  }
+
+  Payload packed;
+  packed.reserve(6U + image.heatshrink_bytes.size());
+  const auto size_marker = 0xCC000000U |
+                           static_cast<std::uint32_t>(image.heatshrink_bytes.size());
+  append_integral_be(packed, size_marker);
+  append_integral_be(packed, crc16ccitt(image.heatshrink_bytes));
+  packed.insert(packed.end(), image.heatshrink_bytes.begin(), image.heatshrink_bytes.end());
+  return packed;
 }
 
 ControllerProtocol::Payload ControllerProtocol::build_get_values_request() {
@@ -351,13 +395,44 @@ ControllerProtocol::Payload ControllerProtocol::build_set_servo_pos_command(floa
 
 std::optional<FwVersion> ControllerProtocol::parse_fw_version(const Payload& payload) {
   // [0] comm_id  [1] major  [2] minor  [3..] hw name, uuid, ...
-  if (payload.size() < 3) {
+  if (payload.size() < 3 || payload[0] != static_cast<std::uint8_t>(CommandId::FwVersion)) {
     return std::nullopt;
   }
-  if (payload[0] != static_cast<std::uint8_t>(CommandId::FwVersion)) {
+
+  FwVersion version;
+  version.major = payload[1];
+  version.minor = payload[2];
+  if (payload.size() == 3) {
+    return version;
+  }
+
+  const auto name_end = std::find(payload.begin() + 3, payload.end(), std::uint8_t{0});
+  if (name_end == payload.end()) {
     return std::nullopt;
   }
-  return FwVersion{payload[1], payload[2]};
+  version.hardware_name.assign(payload.begin() + 3, name_end);
+
+  constexpr std::size_t kUuidAndFlagsBytes = 12U + 2U;
+  const auto identity_start = name_end + 1;
+  if (static_cast<std::size_t>(payload.end() - identity_start) > kUuidAndFlagsBytes) {
+    version.hardware_type = identity_start[kUuidAndFlagsBytes];
+  }
+  return version;
+}
+
+bool ControllerProtocol::parse_firmware_erase_ack(const Payload& payload) {
+  return payload == Payload({static_cast<std::uint8_t>(CommandId::EraseNewApp), 1});
+}
+
+bool ControllerProtocol::parse_firmware_write_ack(const Payload& payload,
+                                                  std::uint32_t expected_offset) {
+  if (payload.size() != 2 && payload.size() != 6) {
+    return false;
+  }
+  if (payload[0] != static_cast<std::uint8_t>(CommandId::WriteNewAppData) || payload[1] != 1) {
+    return false;
+  }
+  return payload.size() == 2 || read_u32(payload.data() + 2) == expected_offset;
 }
 
 std::optional<MotorState> ControllerProtocol::parse_get_values(const Payload& payload) {

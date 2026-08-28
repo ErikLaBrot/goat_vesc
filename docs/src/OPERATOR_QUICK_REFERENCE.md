@@ -101,6 +101,9 @@ Runtime adjustment and diagnostic entry points include:
   suppression. The command has no acknowledgement.
 - `run_foc_calibration(...)` performs direct-controller firmware-7.00 FOC
   detection and returns the raw firmware result code.
+- `update_firmware(...)` uploads a caller-selected VESC Tool-compatible
+  heatshrink image directly over USB. The caller must verify hardware identity,
+  image provenance, backup, and operator authorization before calling it.
 
 Motor and app writes compare the image's embedded schema signature with the
 active controller before sending. A management timeout stops the connection;

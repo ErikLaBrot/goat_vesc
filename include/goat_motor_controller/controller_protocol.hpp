@@ -35,6 +35,14 @@ public:
    * @return Fully framed packet ready to write to the transport.
    */
   static Payload build_fw_version_request();
+  /** @brief Builds a firmware staging-area erase request. */
+  static Payload build_erase_firmware_request(std::uint32_t uncompressed_size);
+  /** @brief Builds one firmware staging-area write request. */
+  static Payload build_write_firmware_request(const Payload& chunk, std::uint32_t offset);
+  /** @brief Builds the fire-and-forget command that boots the staged firmware. */
+  static Payload build_jump_to_bootloader_command();
+  /** @brief Adds the VESC heatshrink size marker and CRC to an upload image. */
+  static Payload pack_firmware_image(const FirmwareImage& image);
   /**
    * @brief Builds a `COMM_GET_VALUES` request packet.
    * @return Fully framed packet ready to write to the transport.
@@ -107,6 +115,11 @@ public:
    * @return Parsed firmware version or `std::nullopt` if malformed.
    */
   static std::optional<FwVersion> parse_fw_version(const Payload& payload);
+  /** @brief Validates a firmware staging-area erase acknowledgement. */
+  static bool parse_firmware_erase_ack(const Payload& payload);
+  /** @brief Validates a firmware chunk acknowledgement and echoed offset. */
+  static bool parse_firmware_write_ack(const Payload& payload,
+                                       std::uint32_t expected_offset);
   /**
    * @brief Parses a `COMM_GET_VALUES` payload.
    * @param payload Raw payload with framing and CRC already stripped.

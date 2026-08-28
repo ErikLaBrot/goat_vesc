@@ -21,6 +21,7 @@ constexpr std::size_t kConfigSignatureBytes = 4;
 constexpr std::uint32_t kInitialLispReadBytes = 10;
 constexpr std::uint32_t kLispReadChunkBytes = 400;
 constexpr std::size_t kLispWriteChunkBytes = 384;
+constexpr std::size_t kFirmwareWriteChunkBytes = 384;
 constexpr std::uint32_t kEmptyLispEraseBytes = 16;
 constexpr std::uint32_t kLispEraseMarginBytes = 100;
 thread_local ControllerClient* active_io_client = nullptr;
@@ -404,6 +405,55 @@ std::optional<FwVersion> ControllerClient::request_fw_version(std::chrono::milli
       request_payload(ControllerProtocol::build_fw_version_request(), CommandId::FwVersion,
                       SteadyClock::now() + timeout, false);
   return payload ? ControllerProtocol::parse_fw_version(*payload) : std::nullopt;
+}
+
+OperationResult ControllerClient::update_firmware(const FirmwareImage& image,
+                                                  std::chrono::milliseconds timeout) {
+  auto packed = ControllerProtocol::pack_firmware_image(image);
+  if (packed.empty()) {
+    return OperationResult::InvalidData;
+  }
+
+  const auto deadline = SteadyClock::now() + timeout;
+  std::unique_lock lock(management_mutex_, std::defer_lock);
+  if (timeout <= std::chrono::milliseconds::zero() || !lock.try_lock_until(deadline)) {
+    return OperationResult::NoReply;
+  }
+
+  const auto erase_reply = request_payload(
+      ControllerProtocol::build_erase_firmware_request(image.uncompressed_size),
+      CommandId::EraseNewApp, std::min(deadline, SteadyClock::now() + std::chrono::seconds(20)),
+      true);
+  if (!erase_reply) {
+    return OperationResult::NoReply;
+  }
+  if (!ControllerProtocol::parse_firmware_erase_ack(*erase_reply)) {
+    return OperationResult::Rejected;
+  }
+
+  std::uint32_t offset = 0;
+  while (offset < packed.size()) {
+    const auto chunk_size = std::min(kFirmwareWriteChunkBytes, packed.size() - offset);
+    const auto begin = packed.begin() + static_cast<std::ptrdiff_t>(offset);
+    Payload chunk(begin, begin + static_cast<std::ptrdiff_t>(chunk_size));
+    const auto reply = request_payload(
+        ControllerProtocol::build_write_firmware_request(chunk, offset),
+        CommandId::WriteNewAppData,
+        std::min(deadline, SteadyClock::now() + std::chrono::seconds(3)), true);
+    if (!reply) {
+      return OperationResult::NoReply;
+    }
+    if (!ControllerProtocol::parse_firmware_write_ack(*reply, offset)) {
+      return OperationResult::Rejected;
+    }
+    offset += static_cast<std::uint32_t>(chunk_size);
+  }
+
+  if (!enqueue_command(ControllerProtocol::build_jump_to_bootloader_command(), false)) {
+    return OperationResult::NoReply;
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  return OperationResult::Success;
 }
 
 std::optional<ControllerClient::Payload>
